@@ -53,6 +53,17 @@ async function initDb() {
       )
     `);
 
+    // Migration: Add email column if it doesn't exist (for existing databases)
+    try {
+      const [columns]: any = await connection.query('SHOW COLUMNS FROM users LIKE "email"');
+      if (columns.length === 0) {
+        console.log('Adding email column to users table...');
+        await connection.query('ALTER TABLE users ADD COLUMN email VARCHAR(255) UNIQUE NOT NULL AFTER phone');
+      }
+    } catch (err) {
+      console.warn('Migration failed or column already exists');
+    }
+
     // 1. Categories
     await connection.query(`
       CREATE TABLE IF NOT EXISTS categories (
@@ -262,9 +273,10 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   const { phone, password } = req.body;
   try {
+    // Allow login with phone OR email
     const [users]: any = await pool.query(
-      'SELECT id, phone, email, name, role, bonus_balance FROM users WHERE phone = ? AND password = ?',
-      [phone, password]
+      'SELECT id, phone, email, name, role, bonus_balance FROM users WHERE (phone = ? OR email = ?) AND password = ?',
+      [phone, phone, password]
     );
     if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
     res.json(users[0]);

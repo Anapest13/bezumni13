@@ -86,6 +86,15 @@ export default function App() {
   const [isSplashActive, setIsSplashActive] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Все');
+  const [notifications, setNotifications] = useState<{ id: number; message: string; type: 'success' | 'info' }[]>([]);
+
+  const addNotification = (message: string, type: 'success' | 'info' = 'success') => {
+    const id = Date.now();
+    setNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 4000);
+  };
 
   const formatPhone = (value: string) => {
     const numbers = value.replace(/\D/g, '');
@@ -111,8 +120,38 @@ export default function App() {
     const timer = setTimeout(() => setIsSplashActive(false), 2000);
     fetchMenu();
     fetchNews();
-    return () => clearTimeout(timer);
-  }, []);
+    
+    // Poll for orders if logged in
+    let pollInterval: NodeJS.Timeout;
+    if (user) {
+      pollInterval = setInterval(fetchUserOrders, 10000);
+    }
+
+    return () => {
+      clearTimeout(timer);
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [user]);
+
+  // Watch for order status changes to notify
+  const prevOrdersRef = React.useRef<Order[]>([]);
+  useEffect(() => {
+    if (userOrders.length > 0 && prevOrdersRef.current.length > 0) {
+      userOrders.forEach(order => {
+        const prev = prevOrdersRef.current.find(o => o.id === order.id);
+        if (prev && prev.status !== order.status) {
+          let statusText = '';
+          switch(order.status) {
+            case 'preparing': statusText = 'начали готовить! 👨‍🍳'; break;
+            case 'ready': statusText = 'готов к выдаче! 🌯'; break;
+            case 'delivered': statusText = 'доставлен! Приятного аппетита! ❤️'; break;
+          }
+          if (statusText) addNotification(`Ваш заказ #${order.id} ${statusText}`);
+        }
+      });
+    }
+    prevOrdersRef.current = userOrders;
+  }, [userOrders]);
 
   useEffect(() => {
     if (activeTab === 'admin') {
@@ -275,8 +314,8 @@ export default function App() {
         setCart([]);
         setAppliedPromo(null);
         setUseBonuses(false);
-        alert('Заказ успешно оформлен!');
-        setActiveTab('home');
+        addNotification('Заказ успешно оформлен! 🎉');
+        setActiveTab('profile'); // Switch to profile to see the order
         const userRes = await fetch(`/api/user/${user.id}`);
         if (userRes.ok) setUser(await userRes.json());
       }
@@ -348,6 +387,30 @@ export default function App() {
                 exit={{ opacity: 0, x: 20 }}
                 className="space-y-8"
               >
+                {/* Active Order Tracker */}
+                {userOrders.find(o => ['pending', 'preparing', 'ready'].includes(o.status)) && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    className="bg-orange-500 text-black p-4 rounded-[32px] flex items-center justify-between shadow-xl shadow-orange-500/20"
+                    onClick={() => setActiveTab('profile')}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-black/10 rounded-2xl flex items-center justify-center">
+                        <ChefHat className="w-6 h-6 animate-bounce" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-60">Ваш заказ готовится</p>
+                        <h4 className="text-lg font-black italic uppercase leading-tight">Заказ #{userOrders.find(o => ['pending', 'preparing', 'ready'].includes(o.status))?.id}</h4>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-black uppercase opacity-60">Время</p>
+                      <p className="text-lg font-black italic">~{userOrders.find(o => ['pending', 'preparing', 'ready'].includes(o.status))?.estimated_time || 20} мин</p>
+                    </div>
+                  </motion.div>
+                )}
+
                 {/* News Carousel */}
                 <section className="relative overflow-hidden rounded-[32px]">
                   <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory no-scrollbar pb-2">
@@ -686,6 +749,53 @@ export default function App() {
                             </div>
                           </div>
 
+                          {/* Order Visualization */}
+                          {order.status !== 'cancelled' && order.status !== 'delivered' && (
+                            <div className="relative pt-2 pb-6 px-2">
+                              <div className="flex justify-between mb-2 relative z-10">
+                                {[ 
+                                  { s: 'pending', i: <Clock className="w-3 h-3" />, l: 'Принят' },
+                                  { s: 'preparing', i: <ChefHat className="w-3 h-3" />, l: 'Готовим' },
+                                  { s: 'ready', i: <CheckCircle2 className="w-3 h-3" />, l: 'Готов' },
+                                  { s: 'delivered', i: <Truck className="w-3 h-3" />, l: 'В пути' }
+                                ].map((step, idx) => {
+                                  const statuses = ['pending', 'preparing', 'ready', 'delivered'];
+                                  const currentIdx = statuses.indexOf(order.status);
+                                  const isActive = idx <= currentIdx;
+                                  const isCurrent = idx === currentIdx;
+                                  return (
+                                    <div key={step.s} className="flex flex-col items-center gap-1.5">
+                                      <div className={cn(
+                                        "w-8 h-8 rounded-full flex items-center justify-center transition-all duration-700",
+                                        isActive ? "bg-orange-500 text-black shadow-[0_0_15px_rgba(249,115,22,0.4)]" : "bg-white/5 text-white/20 border border-white/10",
+                                        isCurrent && "animate-pulse scale-110"
+                                      )}>
+                                        {step.i}
+                                      </div>
+                                      <span className={cn("text-[8px] font-black uppercase tracking-tighter", isActive ? "text-orange-500" : "text-white/20")}>
+                                        {step.l}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="absolute top-[22px] left-6 right-6 h-[2px] bg-white/5 -z-0">
+                                <motion.div 
+                                  initial={{ width: 0 }}
+                                  animate={{ 
+                                    width: 
+                                      order.status === 'pending' ? '0%' : 
+                                      order.status === 'preparing' ? '33%' : 
+                                      order.status === 'ready' ? '66%' : 
+                                      order.status === 'delivered' ? '100%' : '0%'
+                                  }}
+                                  transition={{ duration: 1, ease: "easeInOut" }}
+                                  className="h-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.5)]"
+                                />
+                              </div>
+                            </div>
+                          )}
+
                           {(order.status === 'preparing' || order.status === 'pending') && (
                             <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4 flex items-center gap-4">
                               <Clock className="w-6 h-6 text-orange-500 animate-pulse" />
@@ -936,6 +1046,26 @@ export default function App() {
             <NavButton active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} icon={<Settings />} label="Админ" />
           )}
         </nav>
+
+        {/* Notifications */}
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[110] w-full max-w-[400px] px-6 pointer-events-none">
+          <AnimatePresence>
+            {notifications.map(n => (
+              <motion.div 
+                key={n.id}
+                initial={{ opacity: 0, y: -20, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="mb-3 bg-orange-500 text-black p-4 rounded-2xl shadow-2xl flex items-center gap-3 pointer-events-auto"
+              >
+                <div className="bg-black/10 p-2 rounded-xl">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <p className="font-bold text-sm leading-tight">{n.message}</p>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
       </div>
     </div>
   );
