@@ -1,11 +1,24 @@
+export interface Category {
+  id: number;
+  name: string;
+}
+
+export interface ProductVariant {
+  id: number;
+  product_id: number;
+  size_label: string; // e.g. "300г", "0.5л"
+  price: number;
+}
+
 export interface MenuItem {
   id: number;
   name: string;
   description: string;
-  price: number;
-  category: string;
+  category_id: number;
+  category_name: string;
   image_url: string;
   is_available: boolean;
+  variants: ProductVariant[];
 }
 
 export interface Order {
@@ -17,14 +30,12 @@ export interface Order {
   created_at: string;
 }
 
-export interface OrderItem {
-  id: number;
-  order_id: number;
-  menu_item_id: number;
-  quantity: number;
+export interface CartItem {
+  product_id: number;
+  variant_id: number;
+  name: string;
+  size_label: string;
   price: number;
-}
-
-export interface CartItem extends MenuItem {
   quantity: number;
+  image_url: string;
 }

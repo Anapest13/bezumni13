@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { MenuItem, Order, CartItem } from './types';
+import { MenuItem, Order, CartItem, ProductVariant } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -36,39 +36,17 @@ function cn(...inputs: ClassValue[]) {
 const SAMPLE_MENU: MenuItem[] = [
   {
     id: 1,
-    name: "Классическая Шаурма",
-    description: "Курица, свежие овощи, фирменный соус в хрустящем лаваше",
-    price: 250,
-    category: "Классика",
+    name: "Фирменная",
+    description: "Мясо цыпленка, ароматный лаваш, фирменный соус, томаты, свежий огурец, салат капустный",
+    category_id: 1,
+    category_name: "Шаурма",
     image_url: "https://picsum.photos/seed/shawarma1/400/300",
-    is_available: true
-  },
-  {
-    id: 2,
-    name: "Сырная Шаурма",
-    description: "Двойная порция сыра, курица, овощи и сырный соус",
-    price: 290,
-    category: "Сырная",
-    image_url: "https://picsum.photos/seed/shawarma2/400/300",
-    is_available: true
-  },
-  {
-    id: 3,
-    name: "Острая Шаурма",
-    description: "Халапеньо, острый соус, курица и овощи",
-    price: 270,
-    category: "Острая",
-    image_url: "https://picsum.photos/seed/shawarma3/400/300",
-    is_available: true
-  },
-  {
-    id: 4,
-    name: "Веган Шаурма",
-    description: "Фалафель, хумус, свежие овощи и кунжутный соус",
-    price: 240,
-    category: "Веган",
-    image_url: "https://picsum.photos/seed/shawarma4/400/300",
-    is_available: true
+    is_available: true,
+    variants: [
+      { id: 1, product_id: 1, size_label: "300г", price: 220 },
+      { id: 2, product_id: 1, size_label: "400г", price: 260 },
+      { id: 3, product_id: 1, size_label: "500г", price: 290 }
+    ]
   }
 ];
 
@@ -85,12 +63,12 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Все');
 
-  const categories = ['Все', ...Array.from(new Set(menu.map(item => item.category).filter(Boolean)))];
+  const categories = ['Все', ...Array.from(new Set(menu.map(item => item.category_name).filter(Boolean)))];
 
   const filteredMenu = menu.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                          item.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === 'Все' || item.category === selectedCategory;
+    const matchesCategory = selectedCategory === 'Все' || item.category_name === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
@@ -130,19 +108,27 @@ export default function App() {
     }
   };
 
-  const addToCart = (item: MenuItem) => {
+  const addToCart = (product: MenuItem, variant: ProductVariant) => {
     setCart(prev => {
-      const existing = prev.find(i => i.id === item.id);
+      const existing = prev.find(i => i.variant_id === variant.id);
       if (existing) {
-        return prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
+        return prev.map(i => i.variant_id === variant.id ? { ...i, quantity: i.quantity + 1 } : i);
       }
-      return [...prev, { ...item, quantity: 1 }];
+      return [...prev, { 
+        product_id: product.id,
+        variant_id: variant.id,
+        name: product.name,
+        size_label: variant.size_label,
+        price: variant.price,
+        image_url: product.image_url,
+        quantity: 1 
+      }];
     });
   };
 
-  const updateQuantity = (id: number, delta: number) => {
+  const updateQuantity = (variantId: number, delta: number) => {
     setCart(prev => prev.map(i => {
-      if (i.id === id) {
+      if (i.variant_id === variantId) {
         const newQty = Math.max(0, i.quantity + delta);
         return { ...i, quantity: newQty };
       }
@@ -178,9 +164,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white font-sans overflow-hidden flex justify-center">
-      {/* Mobile Frame (only on desktop) */}
-      <div className="w-full max-w-[450px] min-h-screen bg-[#0a0a0a] relative flex flex-col shadow-2xl shadow-orange-500/10 border-x border-white/5">
+    <div className="min-h-screen bg-[#0a0a0a] text-white font-sans overflow-x-hidden flex justify-center">
+      {/* Mobile Frame (centered on desktop, full width on mobile) */}
+      <div className="w-full md:max-w-[450px] min-h-screen bg-[#0a0a0a] relative flex flex-col shadow-2xl shadow-orange-500/10 md:border-x border-white/5">
         
         <AnimatePresence>
           {isSplashActive && (
@@ -288,9 +274,9 @@ export default function App() {
                             <p className="text-white/40 text-[10px] line-clamp-1">{item.description}</p>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="font-black text-orange-500 italic">{item.price} ₽</span>
+                            <span className="font-black text-orange-500 italic">{item.variants[0]?.price} ₽</span>
                             <button 
-                              onClick={() => addToCart(item)}
+                              onClick={() => item.variants[0] && addToCart(item, item.variants[0])}
                               className="w-8 h-8 bg-white text-black rounded-xl flex items-center justify-center hover:bg-orange-500 hover:text-white transition-all active:scale-90"
                             >
                               <Plus className="w-4 h-4" />
@@ -342,23 +328,36 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   {filteredMenu.map(item => (
-                    <motion.div layout key={item.id} className="bg-white/5 border border-white/10 rounded-[32px] p-3 flex flex-col gap-3 group">
-                      <div className="relative aspect-square rounded-[24px] overflow-hidden">
+                    <motion.div 
+                      key={item.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-white/5 rounded-[32px] p-3 border border-white/5 hover:border-orange-500/30 transition-all group"
+                    >
+                      <div className="relative aspect-square rounded-[24px] overflow-hidden mb-3">
                         <img src={item.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
-                        <button className="absolute top-2 right-2 p-2 bg-black/40 backdrop-blur-md rounded-full text-white/40 hover:text-red-500 transition-colors">
-                          <Heart className="w-4 h-4" />
-                        </button>
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
                       <div className="px-1">
                         <h4 className="font-bold text-xs line-clamp-1">{item.name}</h4>
-                        <div className="flex items-center justify-between mt-2">
-                          <span className="font-black text-sm italic">{item.price} ₽</span>
-                          <button 
-                            onClick={() => addToCart(item)}
-                            className="p-2 bg-orange-500 text-black rounded-xl active:scale-90 transition-all"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
+                        <p className="text-[10px] text-white/40 line-clamp-1 mb-2">{item.description}</p>
+                        
+                        <div className="space-y-2">
+                          {item.variants.map(variant => (
+                            <div key={variant.id} className="flex items-center justify-between bg-black/20 p-1.5 rounded-xl border border-white/5">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-bold text-white/60">{variant.size_label}</span>
+                                <span className="font-black text-xs italic">{variant.price} ₽</span>
+                              </div>
+                              <button 
+                                onClick={() => addToCart(item, variant)}
+                                className="p-1.5 bg-orange-500 text-black rounded-lg active:scale-90 transition-all"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </motion.div>
@@ -396,19 +395,22 @@ export default function App() {
                   <>
                     <div className="space-y-4">
                       {cart.map(item => (
-                        <div key={item.id} className="flex gap-4 bg-white/5 p-4 rounded-3xl border border-white/10">
+                        <div key={item.variant_id} className="flex gap-4 bg-white/5 p-4 rounded-3xl border border-white/10">
                           <img src={item.image_url} className="w-20 h-20 rounded-2xl object-cover" referrerPolicy="no-referrer" />
                           <div className="flex-1 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
-                              <h4 className="font-bold text-sm">{item.name}</h4>
-                              <button onClick={() => updateQuantity(item.id, -item.quantity)} className="text-white/20 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                              <div>
+                                <h4 className="font-bold text-sm">{item.name}</h4>
+                                <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{item.size_label}</p>
+                              </div>
+                              <button onClick={() => updateQuantity(item.variant_id, -item.quantity)} className="text-white/20 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                             </div>
                             <div className="flex items-center justify-between">
                               <span className="font-black text-orange-500 italic">{item.price} ₽</span>
                               <div className="flex items-center gap-3 bg-black/40 rounded-xl p-1">
-                                <button onClick={() => updateQuantity(item.id, -1)} className="p-1 hover:bg-white/10 rounded-lg"><Minus className="w-4 h-4" /></button>
+                                <button onClick={() => updateQuantity(item.variant_id, -1)} className="p-1 hover:bg-white/10 rounded-lg"><Minus className="w-4 h-4" /></button>
                                 <span className="font-bold text-xs">{item.quantity}</span>
-                                <button onClick={() => updateQuantity(item.id, 1)} className="p-1 hover:bg-white/10 rounded-lg"><Plus className="w-4 h-4" /></button>
+                                <button onClick={() => updateQuantity(item.variant_id, 1)} className="p-1 hover:bg-white/10 rounded-lg"><Plus className="w-4 h-4" /></button>
                               </div>
                             </div>
                           </div>
@@ -613,7 +615,7 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
                   >
                     {orderDetails.map((item, idx) => (
                       <div key={idx} className="flex justify-between text-xs">
-                        <span className="text-white/60">{item.name} x{item.quantity}</span>
+                        <span className="text-white/60">{item.name} ({item.size_label}) x{item.quantity}</span>
                         <span className="font-bold">{item.price * item.quantity} ₽</span>
                       </div>
                     ))}
@@ -642,66 +644,23 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
         </div>
       ) : (
         <div className="space-y-4">
-          {!isAddingItem ? (
-            <button 
-              onClick={() => setIsAddingItem(true)}
-              className="w-full py-4 bg-white/5 border border-dashed border-white/20 rounded-2xl flex items-center justify-center gap-2 text-white/40 font-bold text-xs uppercase"
-            >
-              <Plus className="w-4 h-4" /> Добавить блюдо
-            </button>
-          ) : (
-            <form onSubmit={addMenuItem} className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="font-black uppercase italic text-sm">Новое блюдо</h4>
-                <button type="button" onClick={() => setIsAddingItem(false)} className="text-white/40"><XCircle className="w-5 h-5" /></button>
-              </div>
-              <input 
-                placeholder="Название" 
-                value={newItem.name} 
-                onChange={e => setNewItem({...newItem, name: e.target.value})}
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm outline-none focus:border-orange-500"
-                required
-              />
-              <div className="grid grid-cols-2 gap-4">
-                <input 
-                  placeholder="Цена" 
-                  type="number"
-                  value={newItem.price} 
-                  onChange={e => setNewItem({...newItem, price: e.target.value})}
-                  className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm outline-none focus:border-orange-500"
-                  required
-                />
-                <input 
-                  placeholder="Категория" 
-                  value={newItem.category} 
-                  onChange={e => setNewItem({...newItem, category: e.target.value})}
-                  className="bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm outline-none focus:border-orange-500"
-                />
-              </div>
-              <input 
-                placeholder="URL изображения" 
-                value={newItem.image_url} 
-                onChange={e => setNewItem({...newItem, image_url: e.target.value})}
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm outline-none focus:border-orange-500"
-              />
-              <textarea 
-                placeholder="Описание" 
-                value={newItem.description} 
-                onChange={e => setNewItem({...newItem, description: e.target.value})}
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm outline-none focus:border-orange-500 h-20"
-              />
-              <button type="submit" className="w-full bg-orange-500 text-black font-black py-3 rounded-xl uppercase italic hover:bg-orange-400 transition-all">
-                Сохранить
-              </button>
-            </form>
-          )}
+          <div className="p-6 bg-white/5 border border-white/10 rounded-3xl text-center">
+            <p className="text-white/40 text-xs font-bold uppercase tracking-widest">Управление меню</p>
+            <p className="text-[10px] text-white/20 mt-2">Добавление новых позиций временно доступно только через БД</p>
+          </div>
           
           {menu.map(item => (
             <div key={item.id} className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-3">
               <img src={item.image_url} className="w-12 h-12 rounded-xl object-cover" referrerPolicy="no-referrer" />
               <div className="flex-1">
                 <h4 className="font-bold text-xs">{item.name}</h4>
-                <p className="text-orange-500 text-[10px] font-black italic">{item.price} ₽</p>
+                <div className="flex gap-2 mt-1">
+                  {item.variants.map(v => (
+                    <span key={v.id} className="text-orange-500 text-[8px] font-black italic bg-orange-500/10 px-1.5 py-0.5 rounded-md">
+                      {v.size_label}: {v.price}₽
+                    </span>
+                  ))}
+                </div>
               </div>
               <button 
                 onClick={() => deleteMenuItem(item.id)}
