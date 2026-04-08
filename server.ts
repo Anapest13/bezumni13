@@ -39,14 +39,6 @@ async function initDb() {
     const connection = await pool.getConnection();
     console.log('Connected to MySQL database.');
 
-    // Force clean state for 3NF migration
-    await connection.query('SET FOREIGN_KEY_CHECKS = 0');
-    await connection.query('DROP TABLE IF EXISTS order_items');
-    await connection.query('DROP TABLE IF EXISTS product_variants');
-    await connection.query('DROP TABLE IF EXISTS products');
-    await connection.query('DROP TABLE IF EXISTS categories');
-    await connection.query('SET FOREIGN_KEY_CHECKS = 1');
-
     // 1. Categories
     await connection.query(`
       CREATE TABLE IF NOT EXISTS categories (
@@ -285,10 +277,10 @@ app.post('/api/admin/menu', async (req, res) => {
 
 app.delete('/api/admin/menu/:id', async (req, res) => {
   try {
-    await pool.query('DELETE FROM menu_items WHERE id = ?', [req.params.id]);
+    await pool.query('DELETE FROM products WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to delete menu item' });
+    res.status(500).json({ error: 'Failed to delete product' });
   }
 });
 
@@ -312,9 +304,21 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    console.log(`Serving static files from: ${distPath}`);
+    
+    // Serve static files from dist
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.js')) {
+          res.setHeader('Content-Type', 'application/javascript');
+        }
+      }
+    }));
+
+    // SPA fallback: serve index.html for any non-file requests
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      res.sendFile(indexPath);
     });
   }
 
