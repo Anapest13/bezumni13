@@ -3,6 +3,8 @@
   "short_name": "Крутая Шаурма",
   "start_url": "/",
   "display": "standalone",
+  "orientation": "portrait",
+  "description": "Лучшая шаурма в твоем городе. Заказывай быстро и удобно!",
   "background_color": "#0a0a0a",
   "theme_color": "#f97316",
   "icons": [
