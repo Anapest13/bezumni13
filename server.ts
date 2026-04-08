@@ -39,6 +39,19 @@ async function initDb() {
     const connection = await pool.getConnection();
     console.log('Connected to MySQL database.');
 
+    // 0. Users
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        phone VARCHAR(20) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        name VARCHAR(255),
+        role ENUM('user', 'admin') DEFAULT 'user',
+        bonus_balance DECIMAL(10, 2) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // 1. Categories
     await connection.query(`
       CREATE TABLE IF NOT EXISTS categories (
@@ -75,11 +88,15 @@ async function initDb() {
     await connection.query(`
       CREATE TABLE IF NOT EXISTS orders (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT,
         customer_name VARCHAR(255),
         customer_phone VARCHAR(50),
         total_amount DECIMAL(10, 2) NOT NULL,
+        discount_amount DECIMAL(10, 2) DEFAULT 0,
+        bonuses_used DECIMAL(10, 2) DEFAULT 0,
         status ENUM('pending', 'preparing', 'ready', 'delivered', 'cancelled') DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `);
 
@@ -91,8 +108,20 @@ async function initDb() {
         variant_id INT,
         quantity INT NOT NULL,
         price DECIMAL(10, 2) NOT NULL,
+        customization TEXT, -- JSON string for removed/added ingredients
         FOREIGN KEY (order_id) REFERENCES orders(id),
         FOREIGN KEY (variant_id) REFERENCES product_variants(id)
+      )
+    `);
+
+    // 6. Promo Codes
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS promo_codes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        discount_percent INT NOT NULL,
+        min_order_amount DECIMAL(10, 2) DEFAULT 0,
+        is_active BOOLEAN DEFAULT TRUE
       )
     `);
 
@@ -186,6 +215,59 @@ async function initDb() {
 initDb();
 
 // API Routes
+
+// Auth
+app.post('/api/auth/register', async (req, res) => {
+  const { phone, password, name } = req.body;
+  try {
+    // In a real app, hash the password!
+    const [result]: any = await pool.query(
+      'INSERT INTO users (phone, password, name) VALUES (?, ?, ?)',
+      [phone, password, name]
+    );
+    const [user]: any = await pool.query('SELECT id, phone, name, role, bonus_balance FROM users WHERE id = ?', [result.insertId]);
+    res.status(201).json(user[0]);
+  } catch (err: any) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Phone already registered' });
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { phone, password } = req.body;
+  try {
+    const [users]: any = await pool.query(
+      'SELECT id, phone, name, role, bonus_balance FROM users WHERE phone = ? AND password = ?',
+      [phone, password]
+    );
+    if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    res.json(users[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.get('/api/user/:id', async (req, res) => {
+  try {
+    const [users]: any = await pool.query('SELECT id, phone, name, role, bonus_balance FROM users WHERE id = ?', [req.params.id]);
+    if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+    res.json(users[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// Promo Codes
+app.get('/api/promo/:code', async (req, res) => {
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM promo_codes WHERE code = ? AND is_active = TRUE', [req.params.code]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Invalid promo code' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to check promo code' });
+  }
+});
+
 app.get('/api/menu', async (req, res) => {
   if (!process.env.DB_HOST) return res.json([]);
   try {
@@ -211,25 +293,44 @@ app.get('/api/menu', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   if (!process.env.DB_HOST) return res.status(503).json({ error: 'Database not configured' });
-  const { customer_name, customer_phone, items, total_amount } = req.body;
+  const { user_id, customer_name, customer_phone, items, total_amount, discount_amount, bonuses_used } = req.body;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    
+    // 1. Create Order
     const [orderResult]: any = await connection.query(
-      'INSERT INTO orders (customer_name, customer_phone, total_amount) VALUES (?, ?, ?)',
-      [customer_name, customer_phone, total_amount]
+      'INSERT INTO orders (user_id, customer_name, customer_phone, total_amount, discount_amount, bonuses_used) VALUES (?, ?, ?, ?, ?, ?)',
+      [user_id || null, customer_name, customer_phone, total_amount, discount_amount || 0, bonuses_used || 0]
     );
     const orderId = orderResult.insertId;
+
+    // 2. Create Order Items
     for (const item of items) {
+      const customization = JSON.stringify({
+        removed: item.removed_ingredients || [],
+        added: item.added_extras || []
+      });
       await connection.query(
-        'INSERT INTO order_items (order_id, variant_id, quantity, price) VALUES (?, ?, ?, ?)',
-        [orderId, item.variant_id, item.quantity, item.price]
+        'INSERT INTO order_items (order_id, variant_id, quantity, price, customization) VALUES (?, ?, ?, ?, ?)',
+        [orderId, item.variant_id, item.quantity, item.price, customization]
       );
     }
+
+    // 3. Update User Bonuses (Loyalty: 3% back, subtract used)
+    if (user_id) {
+      const bonusEarned = total_amount * 0.03;
+      await connection.query(
+        'UPDATE users SET bonus_balance = bonus_balance - ? + ? WHERE id = ?',
+        [bonuses_used || 0, bonusEarned, user_id]
+      );
+    }
+
     await connection.commit();
     res.status(201).json({ id: orderId, status: 'pending' });
   } catch (err) {
     await connection.rollback();
+    console.error('Order error:', err);
     res.status(500).json({ error: 'Failed to create order' });
   } finally {
     connection.release();
@@ -237,6 +338,28 @@ app.post('/api/orders', async (req, res) => {
 });
 
 // Admin Routes
+app.get('/api/admin/promo', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM promo_codes');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch promo codes' });
+  }
+});
+
+app.post('/api/admin/promo', async (req, res) => {
+  const { code, discount_percent, min_order_amount } = req.body;
+  try {
+    await pool.query(
+      'INSERT INTO promo_codes (code, discount_percent, min_order_amount) VALUES (?, ?, ?)',
+      [code, discount_percent, min_order_amount]
+    );
+    res.status(201).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to add promo code' });
+  }
+});
+
 app.get('/api/admin/orders', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM orders ORDER BY created_at DESC');

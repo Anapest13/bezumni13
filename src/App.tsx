@@ -20,14 +20,14 @@ import {
   UtensilsCrossed,
   Home,
   Menu as MenuIcon,
-  User,
+  User as UserIcon,
   ArrowLeft,
   Search,
   Heart
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { MenuItem, Order, CartItem, ProductVariant } from './types';
+import { MenuItem, Order, CartItem, ProductVariant, type User, PromoCode } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -50,22 +50,44 @@ const SAMPLE_MENU: MenuItem[] = [
   }
 ];
 
-type Tab = 'home' | 'menu' | 'cart' | 'admin';
+const EXTRAS = [
+  { id: 1, name: 'Сырный соус', price: 40 },
+  { id: 2, name: 'Халапеньо', price: 30 },
+  { id: 3, name: 'Двойное мясо', price: 90 },
+  { id: 4, name: 'Грибы', price: 40 },
+];
+
+const INGREDIENTS = [
+  'Капуста', 'Огурцы', 'Помидоры', 'Лук', 'Чесночный соус'
+];
+
+type Tab = 'home' | 'menu' | 'cart' | 'profile' | 'admin';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [menu, setMenu] = useState<MenuItem[]>(SAMPLE_MENU);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [promoCode, setPromoCode] = useState('');
-  const [discount, setDiscount] = useState(0);
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authForm, setAuthForm] = useState({ phone: '', password: '', name: '' });
+  
+  const [customizingItem, setCustomizingItem] = useState<{ product: MenuItem, variant: ProductVariant } | null>(null);
+  const [removedIngredients, setRemovedIngredients] = useState<string[]>([]);
+  const [addedExtras, setAddedExtras] = useState<{ id: number; name: string; price: number }[]>([]);
+
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState<PromoCode | null>(null);
+  const [useBonuses, setUseBonuses] = useState(false);
+  
   const [isSplashActive, setIsSplashActive] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Все');
 
-  const categories = ['Все', ...Array.from(new Set(menu.map(item => item.category_name).filter(Boolean)))];
+  const categories = ['Все', ...Array.from(new Set((Array.isArray(menu) ? menu : []).map(item => item.category_name).filter(Boolean)))];
 
-  const filteredMenu = menu.filter(item => {
+  const filteredMenu = (Array.isArray(menu) ? menu : []).filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                          item.description?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = selectedCategory === 'Все' || item.category_name === selectedCategory;
@@ -108,27 +130,77 @@ export default function App() {
     }
   };
 
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(authForm)
+      });
+      if (res.ok) {
+        const userData = await res.json();
+        setUser(userData);
+        setIsAuthOpen(false);
+      } else {
+        alert('Ошибка авторизации');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const applyPromo = async () => {
+    try {
+      const res = await fetch(`/api/promo/${promoCodeInput}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAppliedPromo(data);
+      } else {
+        alert('Промокод не найден');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const addToCart = (product: MenuItem, variant: ProductVariant) => {
+    if (product.category_name.toLowerCase().includes('шаурма')) {
+      setCustomizingItem({ product, variant });
+      setRemovedIngredients([]);
+      setAddedExtras([]);
+    } else {
+      confirmAddToCart(product, variant, [], []);
+    }
+  };
+
+  const confirmAddToCart = (product: MenuItem, variant: ProductVariant, removed: string[], added: { id: number; name: string; price: number }[]) => {
+    const cartId = `${variant.id}-${removed.join(',')}-${added.map(a => a.id).join(',')}`;
     setCart(prev => {
-      const existing = prev.find(i => i.variant_id === variant.id);
+      const existing = prev.find(i => i.cart_id === cartId);
       if (existing) {
-        return prev.map(i => i.variant_id === variant.id ? { ...i, quantity: i.quantity + 1 } : i);
+        return prev.map(i => i.cart_id === cartId ? { ...i, quantity: i.quantity + 1 } : i);
       }
       return [...prev, { 
+        cart_id: cartId,
         product_id: product.id,
         variant_id: variant.id,
         name: product.name,
         size_label: variant.size_label,
-        price: variant.price,
+        price: variant.price + added.reduce((s, a) => s + a.price, 0),
         image_url: product.image_url,
-        quantity: 1 
+        quantity: 1,
+        removed_ingredients: removed,
+        added_extras: added
       }];
     });
+    setCustomizingItem(null);
   };
 
-  const updateQuantity = (variantId: number, delta: number) => {
+  const updateQuantity = (cartId: string, delta: number) => {
     setCart(prev => prev.map(i => {
-      if (i.variant_id === variantId) {
+      if (i.cart_id === cartId) {
         const newQty = Math.max(0, i.quantity + delta);
         return { ...i, quantity: newQty };
       }
@@ -136,15 +208,25 @@ export default function App() {
     }).filter(i => i.quantity > 0));
   };
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const finalTotal = total * (1 - discount / 100);
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const discountAmount = appliedPromo ? (subtotal * appliedPromo.discount_percent / 100) : 0;
+  const bonusToUse = useBonuses && user ? Math.min(user.bonus_balance, subtotal - discountAmount) : 0;
+  const finalTotal = Math.max(0, subtotal - discountAmount - bonusToUse);
 
   const placeOrder = async () => {
+    if (!user) {
+      setIsAuthOpen(true);
+      return;
+    }
+
     const orderData = {
-      customer_name: "Гость",
-      customer_phone: "89990000000",
+      user_id: user.id,
+      customer_name: user.name,
+      customer_phone: user.phone,
       items: cart,
-      total_amount: finalTotal
+      total_amount: finalTotal,
+      discount_amount: discountAmount,
+      bonuses_used: bonusToUse
     };
 
     try {
@@ -154,12 +236,16 @@ export default function App() {
         body: JSON.stringify(orderData)
       });
       if (res.ok) {
-        alert('Заказ успешно оформлен!');
         setCart([]);
+        setAppliedPromo(null);
+        setUseBonuses(false);
+        alert('Заказ успешно оформлен!');
         setActiveTab('home');
+        const userRes = await fetch(`/api/user/${user.id}`);
+        if (userRes.ok) setUser(await userRes.json());
       }
     } catch (err) {
-      alert('Ошибка при оформлении заказа');
+      console.error(err);
     }
   };
 
@@ -263,7 +349,7 @@ export default function App() {
                     <h3 className="text-lg font-black uppercase italic">Популярное</h3>
                   </div>
                   <div className="grid grid-cols-1 gap-4">
-                    {menu.slice(0, 3).map(item => (
+                    {(Array.isArray(menu) ? menu : []).slice(0, 3).map(item => (
                       <div key={item.id} className="bg-white/5 border border-white/10 rounded-[28px] p-4 flex gap-4 group hover:border-orange-500/30 transition-all">
                         <div className="w-24 h-24 rounded-2xl overflow-hidden shrink-0">
                           <img src={item.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
@@ -274,9 +360,9 @@ export default function App() {
                             <p className="text-white/40 text-[10px] line-clamp-1">{item.description}</p>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="font-black text-orange-500 italic">{item.variants[0]?.price} ₽</span>
+                            <span className="font-black text-orange-500 italic">{item.variants?.[0]?.price || 0} ₽</span>
                             <button 
-                              onClick={() => item.variants[0] && addToCart(item, item.variants[0])}
+                              onClick={() => item.variants?.[0] && addToCart(item, item.variants[0])}
                               className="w-8 h-8 bg-white text-black rounded-xl flex items-center justify-center hover:bg-orange-500 hover:text-white transition-all active:scale-90"
                             >
                               <Plus className="w-4 h-4" />
@@ -344,7 +430,7 @@ export default function App() {
                         <p className="text-[10px] text-white/40 line-clamp-1 mb-2">{item.description}</p>
                         
                         <div className="space-y-2">
-                          {item.variants.map(variant => (
+                          {item.variants?.map(variant => (
                             <div key={variant.id} className="flex items-center justify-between bg-black/20 p-1.5 rounded-xl border border-white/5">
                               <div className="flex flex-col">
                                 <span className="text-[10px] font-bold text-white/60">{variant.size_label}</span>
@@ -395,22 +481,28 @@ export default function App() {
                   <>
                     <div className="space-y-4">
                       {cart.map(item => (
-                        <div key={item.variant_id} className="flex gap-4 bg-white/5 p-4 rounded-3xl border border-white/10">
+                        <div key={item.cart_id} className="flex gap-4 bg-white/5 p-4 rounded-3xl border border-white/10">
                           <img src={item.image_url} className="w-20 h-20 rounded-2xl object-cover" referrerPolicy="no-referrer" />
                           <div className="flex-1 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                               <div>
                                 <h4 className="font-bold text-sm">{item.name}</h4>
                                 <p className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{item.size_label}</p>
+                                {item.removed_ingredients && item.removed_ingredients.length > 0 && (
+                                  <p className="text-[8px] text-red-400 uppercase font-bold">Без: {item.removed_ingredients.join(', ')}</p>
+                                )}
+                                {item.added_extras && item.added_extras.length > 0 && (
+                                  <p className="text-[8px] text-green-400 uppercase font-bold">Доп: {item.added_extras.map(e => e.name).join(', ')}</p>
+                                )}
                               </div>
-                              <button onClick={() => updateQuantity(item.variant_id, -item.quantity)} className="text-white/20 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                              <button onClick={() => updateQuantity(item.cart_id, -item.quantity)} className="text-white/20 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                             </div>
                             <div className="flex items-center justify-between">
                               <span className="font-black text-orange-500 italic">{item.price} ₽</span>
                               <div className="flex items-center gap-3 bg-black/40 rounded-xl p-1">
-                                <button onClick={() => updateQuantity(item.variant_id, -1)} className="p-1 hover:bg-white/10 rounded-lg"><Minus className="w-4 h-4" /></button>
+                                <button onClick={() => updateQuantity(item.cart_id, -1)} className="p-1 hover:bg-white/10 rounded-lg"><Minus className="w-4 h-4" /></button>
                                 <span className="font-bold text-xs">{item.quantity}</span>
-                                <button onClick={() => updateQuantity(item.variant_id, 1)} className="p-1 hover:bg-white/10 rounded-lg"><Plus className="w-4 h-4" /></button>
+                                <button onClick={() => updateQuantity(item.cart_id, 1)} className="p-1 hover:bg-white/10 rounded-lg"><Plus className="w-4 h-4" /></button>
                               </div>
                             </div>
                           </div>
@@ -418,11 +510,61 @@ export default function App() {
                       ))}
                     </div>
 
+                    <div className="space-y-4">
+                      <div className="flex gap-2">
+                        <input 
+                          type="text" 
+                          placeholder="Промокод"
+                          value={promoCodeInput}
+                          onChange={(e) => setPromoCodeInput(e.target.value)}
+                          className="flex-1 bg-white/5 border border-white/10 rounded-2xl py-3 px-4 outline-none focus:border-orange-500 transition-all text-sm"
+                        />
+                        <button 
+                          onClick={applyPromo}
+                          className="px-6 bg-white/10 rounded-2xl font-bold text-xs uppercase italic"
+                        >
+                          Применить
+                        </button>
+                      </div>
+
+                      {user && user.bonus_balance > 0 && (
+                        <button 
+                          onClick={() => setUseBonuses(!useBonuses)}
+                          className={cn(
+                            "w-full flex items-center justify-between p-4 rounded-2xl border transition-all",
+                            useBonuses ? "bg-orange-500/10 border-orange-500/50" : "bg-white/5 border-white/10"
+                          )}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={cn(
+                              "w-5 h-5 rounded-md border flex items-center justify-center transition-all",
+                              useBonuses ? "bg-orange-500 border-orange-500" : "border-white/20"
+                            )}>
+                              {useBonuses && <CheckCircle2 className="w-3 h-3 text-black" />}
+                            </div>
+                            <span className="text-xs font-bold">Списать бонусы (доступно {user.bonus_balance})</span>
+                          </div>
+                        </button>
+                      )}
+                    </div>
+
                     <div className="bg-white/5 rounded-3xl p-6 space-y-4 border border-white/10">
                       <div className="flex justify-between text-white/40 text-sm">
                         <span>Сумма</span>
-                        <span>{total} ₽</span>
+                        <span>{subtotal} ₽</span>
                       </div>
+                      {appliedPromo && (
+                        <div className="flex justify-between text-green-500 text-sm">
+                          <span>Скидка ({appliedPromo.discount_percent}%)</span>
+                          <span>-{discountAmount} ₽</span>
+                        </div>
+                      )}
+                      {useBonuses && (
+                        <div className="flex justify-between text-orange-500 text-sm">
+                          <span>Бонусы</span>
+                          <span>-{bonusToUse} ₽</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-lg font-black uppercase italic">
                         <span>Итого</span>
                         <span className="text-orange-500">{finalTotal} ₽</span>
@@ -439,7 +581,36 @@ export default function App() {
               </motion.div>
             )}
 
-            {activeTab === 'admin' && (
+            {activeTab === 'profile' && user && (
+              <motion.div 
+                key="profile"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="space-y-6"
+              >
+                <div className="bg-white/5 border border-white/10 rounded-[32px] p-8 text-center space-y-4">
+                  <div className="w-20 h-20 bg-orange-500 rounded-full mx-auto flex items-center justify-center text-black text-3xl font-black italic">
+                    {user.name[0]}
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-black uppercase italic">{user.name}</h3>
+                    <p className="text-white/40 font-bold">{user.phone}</p>
+                  </div>
+                  <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4">
+                    <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest">Бонусный баланс</p>
+                    <p className="text-3xl font-black italic text-orange-500">{user.bonus_balance} ₽</p>
+                  </div>
+                  <button 
+                    onClick={() => setUser(null)}
+                    className="text-red-500 text-xs font-bold uppercase tracking-widest"
+                  >
+                    Выйти из аккаунта
+                  </button>
+                </div>
+              </motion.div>
+            )}
+            {activeTab === 'admin' && user?.role === 'admin' && (
               <motion.div 
                 key="admin"
                 initial={{ opacity: 0, scale: 1.05 }}
@@ -452,12 +623,179 @@ export default function App() {
           </AnimatePresence>
         </div>
 
+        {/* Auth Modal */}
+        <AnimatePresence>
+          {isAuthOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsAuthOpen(false)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-md"
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="relative w-full max-w-md bg-zinc-900 border border-white/10 rounded-[40px] p-8 shadow-2xl"
+              >
+                <h3 className="text-2xl font-black uppercase italic mb-6">
+                  {authMode === 'login' ? 'Вход' : 'Регистрация'}
+                </h3>
+                <form onSubmit={handleAuth} className="space-y-4">
+                  {authMode === 'register' && (
+                    <input 
+                      type="text" 
+                      placeholder="Имя"
+                      value={authForm.name}
+                      onChange={(e) => setAuthForm({...authForm, name: e.target.value})}
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                      required
+                    />
+                  )}
+                  <input 
+                    type="tel" 
+                    placeholder="Телефон"
+                    value={authForm.phone}
+                    onChange={(e) => setAuthForm({...authForm, phone: e.target.value})}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                    required
+                  />
+                  <input 
+                    type="password" 
+                    placeholder="Пароль"
+                    value={authForm.password}
+                    onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                    required
+                  />
+                  <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl uppercase italic shadow-lg shadow-orange-500/20">
+                    {authMode === 'login' ? 'Войти' : 'Создать аккаунт'}
+                  </button>
+                </form>
+                <button 
+                  onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+                  className="w-full mt-6 text-white/40 text-xs font-bold uppercase tracking-widest"
+                >
+                  {authMode === 'login' ? 'Нет аккаунта? Регистрация' : 'Уже есть аккаунт? Вход'}
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Customization Modal */}
+        <AnimatePresence>
+          {customizingItem && (
+            <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-6">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setCustomizingItem(null)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-md"
+              />
+              <motion.div 
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                className="relative w-full max-w-md bg-zinc-900 border-t sm:border border-white/10 rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h3 className="text-2xl font-black uppercase italic">{customizingItem.product.name}</h3>
+                    <p className="text-white/40 text-xs font-bold uppercase tracking-widest">{customizingItem.variant.size_label}</p>
+                  </div>
+                  <button onClick={() => setCustomizingItem(null)} className="p-2 bg-white/5 rounded-full"><XCircle className="w-6 h-6 text-white/20" /></button>
+                </div>
+
+                <div className="space-y-8">
+                  <section>
+                    <h4 className="text-xs font-black uppercase tracking-widest text-white/40 mb-4 italic">Убрать ингредиенты</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {INGREDIENTS.map(ing => (
+                        <button 
+                          key={ing}
+                          onClick={() => setRemovedIngredients(prev => 
+                            prev.includes(ing) ? prev.filter(i => i !== ing) : [...prev, ing]
+                          )}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-[10px] font-bold uppercase transition-all border",
+                            removedIngredients.includes(ing) 
+                              ? "bg-red-500/20 border-red-500/50 text-red-500" 
+                              : "bg-white/5 border-white/10 text-white/60"
+                          )}
+                        >
+                          {removedIngredients.includes(ing) ? 'Без ' : ''}{ing}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section>
+                    <h4 className="text-xs font-black uppercase tracking-widest text-white/40 mb-4 italic">Добавить допы</h4>
+                    <div className="grid grid-cols-1 gap-2">
+                      {EXTRAS.map(extra => (
+                        <button 
+                          key={extra.id}
+                          onClick={() => setAddedExtras(prev => 
+                            prev.find(e => e.id === extra.id) ? prev.filter(e => e.id !== extra.id) : [...prev, extra]
+                          )}
+                          className={cn(
+                            "flex items-center justify-between p-4 rounded-2xl border transition-all",
+                            addedExtras.find(e => e.id === extra.id)
+                              ? "bg-orange-500/10 border-orange-500/50"
+                              : "bg-white/5 border-white/10"
+                          )}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={cn(
+                              "w-5 h-5 rounded-md border flex items-center justify-center transition-all",
+                              addedExtras.find(e => e.id === extra.id) ? "bg-orange-500 border-orange-500" : "border-white/20"
+                            )}>
+                              {addedExtras.find(e => e.id === extra.id) && <CheckCircle2 className="w-3 h-3 text-black" />}
+                            </div>
+                            <span className="text-xs font-bold">{extra.name}</span>
+                          </div>
+                          <span className="text-xs font-black italic text-orange-500">+{extra.price} ₽</span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/5 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] text-white/40 font-bold uppercase">Итоговая цена</p>
+                    <p className="text-2xl font-black italic text-orange-500">
+                      {customizingItem.variant.price + addedExtras.reduce((s, e) => s + e.price, 0)} ₽
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => confirmAddToCart(customizingItem.product, customizingItem.variant, removedIngredients, addedExtras)}
+                    className="px-8 py-4 bg-orange-500 text-black font-black rounded-2xl uppercase italic shadow-lg shadow-orange-500/20"
+                  >
+                    Добавить
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
         {/* Bottom Navigation */}
-        <nav className="absolute bottom-0 left-0 right-0 h-24 bg-black/80 backdrop-blur-xl border-t border-white/5 px-8 flex items-center justify-between z-50">
+        <nav className="absolute bottom-0 left-0 right-0 h-24 bg-black/80 backdrop-blur-xl border-t border-white/5 px-6 flex items-center justify-between z-50">
           <NavButton active={activeTab === 'home'} onClick={() => setActiveTab('home')} icon={<Home />} label="Главная" />
           <NavButton active={activeTab === 'menu'} onClick={() => setActiveTab('menu')} icon={<MenuIcon />} label="Меню" />
           <NavButton active={activeTab === 'cart'} onClick={() => setActiveTab('cart')} icon={<ShoppingBag />} label="Корзина" />
-          <NavButton active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} icon={<User />} label="Админ" />
+          <NavButton active={activeTab === 'profile'} onClick={() => {
+            if (user) setActiveTab('profile');
+            else setIsAuthOpen(true);
+          }} icon={<UserIcon />} label="Профиль" />
+          {user?.role === 'admin' && (
+            <NavButton active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} icon={<Settings />} label="Админ" />
+          )}
         </nav>
       </div>
     </div>
@@ -494,7 +832,45 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
   const [orderDetails, setOrderDetails] = useState<any[]>([]);
   const [isAddingItem, setIsAddingItem] = useState(false);
-  const [newItem, setNewItem] = useState({ name: '', description: '', price: '', category: '', image_url: '' });
+  const [newItem, setNewItem] = useState({ name: '', description: '', category_id: '', image_url: '' });
+  const [newVariant, setNewVariant] = useState({ size_label: '', price: '' });
+  const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
+  const [newPromo, setNewPromo] = useState({ code: '', discount_percent: '', min_order_amount: '' });
+
+  useEffect(() => {
+    if (adminTab === 'menu') fetchPromoCodes();
+  }, [adminTab]);
+
+  const fetchPromoCodes = async () => {
+    try {
+      const res = await fetch('/api/admin/promo');
+      if (res.ok) setPromoCodes(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch promo codes');
+    }
+  };
+
+  const addPromoCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/admin/promo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newPromo,
+          discount_percent: parseInt(newPromo.discount_percent),
+          min_order_amount: parseInt(newPromo.min_order_amount)
+        })
+      });
+      if (res.ok) {
+        setNewPromo({ code: '', discount_percent: '', min_order_amount: '' });
+        fetchPromoCodes();
+        alert('Промокод добавлен!');
+      }
+    } catch (err) {
+      alert('Ошибка при добавлении промокода');
+    }
+  };
 
   const updateStatus = async (id: number, status: string) => {
     try {
@@ -643,33 +1019,87 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
           ))}
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="p-6 bg-white/5 border border-white/10 rounded-3xl text-center">
-            <p className="text-white/40 text-xs font-bold uppercase tracking-widest">Управление меню</p>
-            <p className="text-[10px] text-white/20 mt-2">Добавление новых позиций временно доступно только через БД</p>
-          </div>
-          
-          {menu.map(item => (
-            <div key={item.id} className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-3">
-              <img src={item.image_url} className="w-12 h-12 rounded-xl object-cover" referrerPolicy="no-referrer" />
-              <div className="flex-1">
-                <h4 className="font-bold text-xs">{item.name}</h4>
-                <div className="flex gap-2 mt-1">
-                  {item.variants.map(v => (
-                    <span key={v.id} className="text-orange-500 text-[8px] font-black italic bg-orange-500/10 px-1.5 py-0.5 rounded-md">
-                      {v.size_label}: {v.price}₽
-                    </span>
-                  ))}
-                </div>
+        <div className="space-y-8">
+          {/* Promo Codes Section */}
+          <section className="space-y-4">
+            <h3 className="text-lg font-black uppercase italic">Промокоды</h3>
+            <form onSubmit={addPromoCode} className="bg-white/5 p-4 rounded-3xl border border-white/10 space-y-3">
+              <input 
+                type="text" 
+                placeholder="Код (например: COOL)"
+                value={newPromo.code}
+                onChange={(e) => setNewPromo({...newPromo, code: e.target.value})}
+                className="w-full bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-xs outline-none focus:border-orange-500"
+                required
+              />
+              <div className="flex gap-2">
+                <input 
+                  type="number" 
+                  placeholder="Скидка %"
+                  value={newPromo.discount_percent}
+                  onChange={(e) => setNewPromo({...newPromo, discount_percent: e.target.value})}
+                  className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-xs outline-none focus:border-orange-500"
+                  required
+                />
+                <input 
+                  type="number" 
+                  placeholder="Мин. сумма"
+                  value={newPromo.min_order_amount}
+                  onChange={(e) => setNewPromo({...newPromo, min_order_amount: e.target.value})}
+                  className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-xs outline-none focus:border-orange-500"
+                  required
+                />
               </div>
-              <button 
-                onClick={() => deleteMenuItem(item.id)}
-                className="p-2 text-red-500/50 hover:text-red-500 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
+              <button className="w-full bg-orange-500 text-black font-black py-2 rounded-xl text-xs uppercase italic">
+                Добавить промокод
               </button>
+            </form>
+
+            <div className="grid grid-cols-1 gap-2">
+              {promoCodes.map(promo => (
+                <div key={promo.id} className="bg-white/5 border border-white/10 rounded-2xl p-3 flex justify-between items-center">
+                  <div>
+                    <span className="font-black italic text-orange-500">{promo.code}</span>
+                    <span className="text-[10px] text-white/40 ml-2">-{promo.discount_percent}% от {promo.min_order_amount} ₽</span>
+                  </div>
+                  <div className={cn("w-2 h-2 rounded-full", promo.is_active ? "bg-green-500" : "bg-red-500")} />
+                </div>
+              ))}
             </div>
-          ))}
+          </section>
+
+          {/* Menu Section */}
+          <section className="space-y-4">
+            <h3 className="text-lg font-black uppercase italic">Меню</h3>
+            <div className="p-6 bg-white/5 border border-white/10 rounded-3xl text-center">
+              <p className="text-white/40 text-xs font-bold uppercase tracking-widest">Управление меню</p>
+              <p className="text-[10px] text-white/20 mt-2">Добавление новых позиций временно доступно только через БД</p>
+            </div>
+            
+            <div className="space-y-2">
+              {(Array.isArray(menu) ? menu : []).map(item => (
+                <div key={item.id} className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-3">
+                  <img src={item.image_url} className="w-12 h-12 rounded-xl object-cover" referrerPolicy="no-referrer" />
+                  <div className="flex-1">
+                    <h4 className="font-bold text-xs">{item.name}</h4>
+                    <div className="flex gap-2 mt-1">
+                      {item.variants?.map(v => (
+                        <span key={v.id} className="text-orange-500 text-[8px] font-black italic bg-orange-500/10 px-1.5 py-0.5 rounded-md">
+                          {v.size_label}: {v.price}₽
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => deleteMenuItem(item.id)}
+                    className="p-2 text-red-500/50 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       )}
     </div>

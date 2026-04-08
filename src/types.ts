@@ -6,7 +6,7 @@ export interface Category {
 export interface ProductVariant {
   id: number;
   product_id: number;
-  size_label: string; // e.g. "300г", "0.5л"
+  size_label: string;
   price: number;
 }
 
@@ -21,16 +21,36 @@ export interface MenuItem {
   variants: ProductVariant[];
 }
 
+export interface User {
+  id: number;
+  phone: string;
+  name: string;
+  role: 'user' | 'admin';
+  bonus_balance: number;
+}
+
+export interface PromoCode {
+  id: number;
+  code: string;
+  discount_percent: number;
+  min_order_amount: number;
+  is_active: boolean;
+}
+
 export interface Order {
   id: number;
+  user_id: number | null;
   customer_name: string;
   customer_phone: string;
   total_amount: number;
+  discount_amount: number;
+  bonuses_used: number;
   status: 'pending' | 'preparing' | 'ready' | 'delivered' | 'cancelled';
   created_at: string;
 }
 
 export interface CartItem {
+  cart_id: string; // Unique ID for this specific customization
   product_id: number;
   variant_id: number;
   name: string;
@@ -38,4 +58,6 @@ export interface CartItem {
   price: number;
   quantity: number;
   image_url: string;
+  removed_ingredients: string[];
+  added_extras: { id: number; name: string; price: number }[];
 }
