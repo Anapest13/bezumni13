@@ -214,15 +214,17 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(authForm)
       });
+      const data = await res.json();
       if (res.ok) {
-        const userData = await res.json();
-        setUser(userData);
+        setUser(data);
         setIsAuthOpen(false);
+        addNotification(authMode === 'login' ? 'С возвращением! 👋' : 'Добро пожаловать! 🎉');
       } else {
-        alert('Ошибка авторизации');
+        alert(data.error || 'Ошибка авторизации');
       }
     } catch (err) {
       console.error(err);
+      alert('Сетевая ошибка. Попробуйте позже.');
     }
   };
 

@@ -243,7 +243,7 @@ async function initDb() {
     }
 
     connection.release();
-    console.log('Database tables initialized.');
+    console.log('Database tables initialized and ready.');
   } catch (err) {
     console.error('Error initializing database:', err);
   }
@@ -256,6 +256,7 @@ initDb();
 // Auth
 app.post('/api/auth/register', async (req, res) => {
   const { phone, email, password, name } = req.body;
+  console.log('Register attempt:', { phone, email, name });
   try {
     // In a real app, hash the password!
     const [result]: any = await pool.query(
@@ -265,23 +266,26 @@ app.post('/api/auth/register', async (req, res) => {
     const [user]: any = await pool.query('SELECT id, phone, email, name, role, bonus_balance FROM users WHERE id = ?', [result.insertId]);
     res.status(201).json(user[0]);
   } catch (err: any) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Phone or Email already registered' });
-    res.status(500).json({ error: 'Registration failed' });
+    console.error('Registration error:', err);
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Телефон или Email уже зарегистрированы' });
+    res.status(500).json({ error: 'Ошибка регистрации: ' + err.message });
   }
 });
 
 app.post('/api/auth/login', async (req, res) => {
   const { phone, password } = req.body;
+  console.log('Login attempt:', { phone });
   try {
     // Allow login with phone OR email
     const [users]: any = await pool.query(
       'SELECT id, phone, email, name, role, bonus_balance FROM users WHERE (phone = ? OR email = ?) AND password = ?',
       [phone, phone, password]
     );
-    if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+    if (users.length === 0) return res.status(401).json({ error: 'Неверный телефон/email или пароль' });
     res.json(users[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'Login failed' });
+  } catch (err: any) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Ошибка входа: ' + err.message });
   }
 });
 
