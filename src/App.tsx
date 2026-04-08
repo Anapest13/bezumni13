@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { MenuItem, Order, CartItem, ProductVariant, type User, PromoCode } from './types';
+import { MenuItem, Order, CartItem, ProductVariant, type User, PromoCode, NewsItem } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -71,7 +71,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [authForm, setAuthForm] = useState({ phone: '', password: '', name: '' });
+  const [authForm, setAuthForm] = useState({ phone: '', email: '', password: '', name: '' });
+  const [userOrders, setUserOrders] = useState<Order[]>([]);
+  const [news, setNews] = useState<NewsItem[]>([]);
   
   const [customizingItem, setCustomizingItem] = useState<{ product: MenuItem, variant: ProductVariant } | null>(null);
   const [removedIngredients, setRemovedIngredients] = useState<string[]>([]);
@@ -85,6 +87,17 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Все');
 
+  const formatPhone = (value: string) => {
+    const numbers = value.replace(/\D/g, '');
+    if (numbers.length <= 1) return '+7';
+    let formatted = '+7';
+    if (numbers.length > 1) formatted += ' (' + numbers.substring(1, 4);
+    if (numbers.length >= 5) formatted += ') ' + numbers.substring(4, 7);
+    if (numbers.length >= 8) formatted += '-' + numbers.substring(7, 9);
+    if (numbers.length >= 10) formatted += '-' + numbers.substring(9, 11);
+    return formatted;
+  };
+
   const categories = ['Все', ...Array.from(new Set((Array.isArray(menu) ? menu : []).map(item => item.category_name).filter(Boolean)))];
 
   const filteredMenu = (Array.isArray(menu) ? menu : []).filter(item => {
@@ -97,6 +110,7 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => setIsSplashActive(false), 2000);
     fetchMenu();
+    fetchNews();
     return () => clearTimeout(timer);
   }, []);
 
@@ -104,7 +118,29 @@ export default function App() {
     if (activeTab === 'admin') {
       fetchOrders();
     }
-  }, [activeTab]);
+    if (activeTab === 'profile' && user) {
+      fetchUserOrders();
+    }
+  }, [activeTab, user]);
+
+  const fetchNews = async () => {
+    try {
+      const res = await fetch('/api/news');
+      if (res.ok) setNews(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch news');
+    }
+  };
+
+  const fetchUserOrders = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/user/${user.id}/orders`);
+      if (res.ok) setUserOrders(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch user orders');
+    }
+  };
 
   const fetchMenu = async () => {
     try {
@@ -312,29 +348,40 @@ export default function App() {
                 exit={{ opacity: 0, x: 20 }}
                 className="space-y-8"
               >
-                {/* Promo Banner */}
-                <section className="relative h-48 rounded-[32px] overflow-hidden bg-gradient-to-br from-orange-500 to-red-600 p-6 flex flex-col justify-end group">
-                  <div className="absolute top-4 right-4 bg-black/20 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-black uppercase">
-                    Акция дня
+                {/* News Carousel */}
+                <section className="relative overflow-hidden rounded-[32px]">
+                  <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory no-scrollbar pb-2">
+                    {news.map((item) => (
+                      <motion.div 
+                        key={item.id}
+                        className="relative min-w-full h-48 rounded-[32px] overflow-hidden bg-zinc-900 snap-center shrink-0"
+                      >
+                        <img src={item.image_url} className="absolute inset-0 w-full h-full object-cover opacity-60" referrerPolicy="no-referrer" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent p-6 flex flex-col justify-end">
+                          <div className="absolute top-4 right-4 bg-orange-500 text-black px-3 py-1 rounded-full text-[10px] font-black uppercase">
+                            {item.type === 'promo' ? 'Акция' : 'Новость'}
+                          </div>
+                          <h3 className="text-2xl font-black italic uppercase leading-tight">{item.title}</h3>
+                          <p className="text-xs font-bold opacity-80 line-clamp-1">{item.content}</p>
+                        </div>
+                      </motion.div>
+                    ))}
                   </div>
-                  <h3 className="text-3xl font-black italic uppercase leading-none mb-2">Скидка 15% <br /> на всё!</h3>
-                  <p className="text-xs font-bold opacity-80">Промокод: <span className="text-black bg-white/40 px-2 rounded">COOL</span></p>
-                  <UtensilsCrossed className="absolute -right-8 -top-8 w-48 h-48 opacity-10 group-hover:rotate-12 transition-transform duration-700" />
                 </section>
 
                 {/* Categories */}
                 <section>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-black uppercase italic">Категории</h3>
-                    <button className="text-orange-500 text-xs font-bold uppercase">Все</button>
                   </div>
                   <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
-                    {['Все', 'Классика', 'Сырная', 'Острая', 'Веган'].map((cat, i) => (
+                    {categories.map((cat) => (
                       <button 
                         key={cat}
+                        onClick={() => setSelectedCategory(cat)}
                         className={cn(
                           "px-6 py-3 rounded-2xl font-bold text-sm whitespace-nowrap transition-all active:scale-95",
-                          i === 0 ? "bg-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/5 border border-white/10"
+                          selectedCategory === cat ? "bg-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/5 border border-white/10"
                         )}
                       >
                         {cat}
@@ -596,6 +643,7 @@ export default function App() {
                   <div>
                     <h3 className="text-2xl font-black uppercase italic">{user.name}</h3>
                     <p className="text-white/40 font-bold">{user.phone}</p>
+                    <p className="text-white/20 text-xs">{user.email}</p>
                   </div>
                   <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4">
                     <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest">Бонусный баланс</p>
@@ -607,6 +655,87 @@ export default function App() {
                   >
                     Выйти из аккаунта
                   </button>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-lg font-black uppercase italic">История заказов</h3>
+                  {userOrders.length === 0 ? (
+                    <div className="bg-white/5 border border-white/10 rounded-3xl p-8 text-center">
+                      <p className="text-white/40 text-sm font-bold">У вас пока нет заказов</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {userOrders.map(order => (
+                        <div key={order.id} className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="text-[10px] text-white/40 font-black uppercase tracking-widest">Заказ #{order.id}</p>
+                              <p className="text-xs text-white/60">{new Date(order.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div className={cn(
+                              "px-3 py-1 rounded-full text-[10px] font-black uppercase",
+                              order.status === 'delivered' ? "bg-green-500/20 text-green-500" :
+                              order.status === 'cancelled' ? "bg-red-500/20 text-red-500" :
+                              "bg-orange-500/20 text-orange-500"
+                            )}>
+                              {order.status === 'pending' && 'Ожидает'}
+                              {order.status === 'preparing' && 'Готовится'}
+                              {order.status === 'ready' && 'Готов'}
+                              {order.status === 'delivered' && 'Доставлен'}
+                              {order.status === 'cancelled' && 'Отменен'}
+                            </div>
+                          </div>
+
+                          {(order.status === 'preparing' || order.status === 'pending') && (
+                            <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4 flex items-center gap-4">
+                              <Clock className="w-6 h-6 text-orange-500 animate-pulse" />
+                              <div>
+                                <p className="text-[10px] text-orange-500 font-black uppercase">Ожидаемое время</p>
+                                <p className="text-lg font-black italic text-orange-500">~{order.estimated_time || 20} мин</p>
+                              </div>
+                            </div>
+                          )}
+
+                          {order.status === 'delivered' && !order.rating && (
+                            <div className="pt-4 border-t border-white/5 space-y-3">
+                              <p className="text-xs font-bold uppercase italic text-white/40">Оцените заказ</p>
+                              <div className="flex gap-2">
+                                {[1, 2, 3, 4, 5].map(star => (
+                                  <button 
+                                    key={star}
+                                    onClick={async () => {
+                                      const review = prompt('Оставьте отзыв (необязательно):');
+                                      await fetch(`/api/orders/${order.id}/review`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ rating: star, review })
+                                      });
+                                      fetchUserOrders();
+                                    }}
+                                    className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center hover:bg-orange-500 hover:text-black transition-all"
+                                  >
+                                    <Heart className="w-5 h-5" />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {order.rating && (
+                            <div className="pt-4 border-t border-white/5 flex items-center gap-2">
+                              <Heart className="w-4 h-4 text-orange-500 fill-orange-500" />
+                              <span className="text-xs font-bold text-orange-500">Ваша оценка: {order.rating}/5</span>
+                            </div>
+                          )}
+
+                          <div className="flex justify-between items-center pt-2">
+                            <span className="text-white/40 text-xs font-bold">Сумма заказа</span>
+                            <span className="font-black italic text-orange-500">{order.total_amount} ₽</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -658,10 +787,20 @@ export default function App() {
                     type="tel" 
                     placeholder="Телефон"
                     value={authForm.phone}
-                    onChange={(e) => setAuthForm({...authForm, phone: e.target.value})}
+                    onChange={(e) => setAuthForm({...authForm, phone: formatPhone(e.target.value)})}
                     className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
                     required
                   />
+                  {authMode === 'register' && (
+                    <input 
+                      type="email" 
+                      placeholder="Email"
+                      value={authForm.email}
+                      onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                      required
+                    />
+                  )}
                   <input 
                     type="password" 
                     placeholder="Пароль"
@@ -873,11 +1012,16 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
   };
 
   const updateStatus = async (id: number, status: string) => {
+    let estimated_time = undefined;
+    if (status === 'preparing') {
+      const time = prompt('Введите примерное время приготовления (мин):', '20');
+      if (time) estimated_time = parseInt(time);
+    }
     try {
       await fetch(`/api/admin/orders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status, estimated_time })
       });
       onUpdateStatus();
     } catch (err) {

@@ -24,6 +24,7 @@ export interface MenuItem {
 export interface User {
   id: number;
   phone: string;
+  email: string;
   name: string;
   role: 'user' | 'admin';
   bonus_balance: number;
@@ -46,6 +47,18 @@ export interface Order {
   discount_amount: number;
   bonuses_used: number;
   status: 'pending' | 'preparing' | 'ready' | 'delivered' | 'cancelled';
+  estimated_time?: number; // in minutes
+  review?: string;
+  rating?: number;
+  created_at: string;
+}
+
+export interface NewsItem {
+  id: number;
+  title: string;
+  content: string;
+  image_url: string;
+  type: 'promo' | 'news';
   created_at: string;
 }
 

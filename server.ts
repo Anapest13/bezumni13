@@ -44,6 +44,7 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
         phone VARCHAR(20) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
         name VARCHAR(255),
         role ENUM('user', 'admin') DEFAULT 'user',
@@ -95,10 +96,35 @@ async function initDb() {
         discount_amount DECIMAL(10, 2) DEFAULT 0,
         bonuses_used DECIMAL(10, 2) DEFAULT 0,
         status ENUM('pending', 'preparing', 'ready', 'delivered', 'cancelled') DEFAULT 'pending',
+        estimated_time INT DEFAULT 20,
+        review TEXT,
+        rating INT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `);
+
+    // 7. News/Carousel
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS news (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        content TEXT,
+        image_url TEXT,
+        type ENUM('promo', 'news') DEFAULT 'news',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Bootstrap Admin
+    const [adminRows]: any = await connection.query("SELECT * FROM users WHERE role = 'admin'");
+    if (adminRows.length === 0) {
+      console.log('Bootstrapping admin account...');
+      await connection.query(
+        "INSERT INTO users (phone, email, password, name, role) VALUES (?, ?, ?, ?, ?)",
+        ['+79999999999', 'admin@shawarma.cool', 'admin123', 'Администратор', 'admin']
+      );
+    }
 
     // 5. Order Items (Linked to Variants)
     await connection.query(`
@@ -218,17 +244,17 @@ initDb();
 
 // Auth
 app.post('/api/auth/register', async (req, res) => {
-  const { phone, password, name } = req.body;
+  const { phone, email, password, name } = req.body;
   try {
     // In a real app, hash the password!
     const [result]: any = await pool.query(
-      'INSERT INTO users (phone, password, name) VALUES (?, ?, ?)',
-      [phone, password, name]
+      'INSERT INTO users (phone, email, password, name) VALUES (?, ?, ?, ?)',
+      [phone, email, password, name]
     );
-    const [user]: any = await pool.query('SELECT id, phone, name, role, bonus_balance FROM users WHERE id = ?', [result.insertId]);
+    const [user]: any = await pool.query('SELECT id, phone, email, name, role, bonus_balance FROM users WHERE id = ?', [result.insertId]);
     res.status(201).json(user[0]);
   } catch (err: any) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Phone already registered' });
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Phone or Email already registered' });
     res.status(500).json({ error: 'Registration failed' });
   }
 });
@@ -237,7 +263,7 @@ app.post('/api/auth/login', async (req, res) => {
   const { phone, password } = req.body;
   try {
     const [users]: any = await pool.query(
-      'SELECT id, phone, name, role, bonus_balance FROM users WHERE phone = ? AND password = ?',
+      'SELECT id, phone, email, name, role, bonus_balance FROM users WHERE phone = ? AND password = ?',
       [phone, password]
     );
     if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
@@ -249,11 +275,47 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/user/:id', async (req, res) => {
   try {
-    const [users]: any = await pool.query('SELECT id, phone, name, role, bonus_balance FROM users WHERE id = ?', [req.params.id]);
+    const [users]: any = await pool.query('SELECT id, phone, email, name, role, bonus_balance FROM users WHERE id = ?', [req.params.id]);
     if (users.length === 0) return res.status(404).json({ error: 'User not found' });
     res.json(users[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+app.get('/api/user/:id/orders', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC', [req.params.id]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch user orders' });
+  }
+});
+
+app.post('/api/orders/:id/review', async (req, res) => {
+  const { rating, review } = req.body;
+  try {
+    await pool.query('UPDATE orders SET rating = ?, review = ? WHERE id = ?', [rating, review, req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to submit review' });
+  }
+});
+
+app.get('/api/news', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM news ORDER BY created_at DESC LIMIT 5');
+    if ((rows as any[]).length === 0) {
+      // Mock news if none in DB
+      return res.json([
+        { id: 1, title: 'Скидка 15% на всё!', content: 'Используй промокод COOL при заказе!', image_url: 'https://picsum.photos/seed/promo1/800/400', type: 'promo' },
+        { id: 2, title: 'Новинка: Гавайская!', content: 'Попробуй нашу новую шаурму с ананасом!', image_url: 'https://picsum.photos/seed/promo2/800/400', type: 'news' },
+        { id: 3, title: 'Бонусы за каждый заказ', content: 'Копи 3% бонусами и оплачивай ими до 100% покупки!', image_url: 'https://picsum.photos/seed/promo3/800/400', type: 'news' }
+      ]);
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch news' });
   }
 });
 
@@ -408,9 +470,13 @@ app.delete('/api/admin/menu/:id', async (req, res) => {
 });
 
 app.patch('/api/admin/orders/:id', async (req, res) => {
-  const { status } = req.body;
+  const { status, estimated_time } = req.body;
   try {
-    await pool.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
+    if (estimated_time !== undefined) {
+      await pool.query('UPDATE orders SET status = ?, estimated_time = ? WHERE id = ?', [status, estimated_time, req.params.id]);
+    } else {
+      await pool.query('UPDATE orders SET status = ? WHERE id = ?', [status, req.params.id]);
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update order' });
