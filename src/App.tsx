@@ -265,7 +265,7 @@ export default function App() {
         variant_id: variant.id,
         name: product.name,
         size_label: variant.size_label,
-        price: variant.price + added.reduce((s, a) => s + a.price, 0),
+        price: Number(variant.price) + added.reduce((s, a) => s + Number(a.price), 0),
         image_url: product.image_url,
         quantity: 1,
         removed_ingredients: removed,
@@ -895,18 +895,29 @@ export default function App() {
                       required
                     />
                   )}
-                  <input 
-                    type="tel" 
-                    placeholder="Телефон"
-                    value={authForm.phone}
-                    onChange={(e) => setAuthForm({...authForm, phone: formatPhone(e.target.value)})}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                    required
-                  />
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон или Email</p>
+                    <input 
+                      type="text" 
+                      placeholder="+7 (___) ___-__-__ или email@example.com"
+                      value={authForm.phone}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        // If it looks like a phone (starts with + or digits), apply mask
+                        if (/^[\d+]/.test(val) && !val.includes('@')) {
+                          setAuthForm({...authForm, phone: formatPhone(val)});
+                        } else {
+                          setAuthForm({...authForm, phone: val});
+                        }
+                      }}
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                      required
+                    />
+                  </div>
                   {authMode === 'register' && (
                     <input 
                       type="email" 
-                      placeholder="Email"
+                      placeholder="Email для уведомлений"
                       value={authForm.email}
                       onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
                       className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
@@ -1020,7 +1031,7 @@ export default function App() {
                   <div>
                     <p className="text-[10px] text-white/40 font-bold uppercase">Итоговая цена</p>
                     <p className="text-2xl font-black italic text-orange-500">
-                      {customizingItem.variant.price + addedExtras.reduce((s, e) => s + e.price, 0)} ₽
+                      {Number(customizingItem.variant.price) + addedExtras.reduce((s, e) => s + Number(e.price), 0)} ₽
                     </p>
                   </div>
                   <button 
