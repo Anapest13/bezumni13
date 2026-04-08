@@ -463,16 +463,44 @@ app.get('/api/admin/orders/:id/items', async (req, res) => {
   }
 });
 
-app.post('/api/admin/menu', async (req, res) => {
-  const { name, description, price, category, image_url } = req.body;
+app.get('/api/admin/categories', async (req, res) => {
   try {
-    await pool.query(
-      'INSERT INTO menu_items (name, description, price, category, image_url) VALUES (?, ?, ?, ?, ?)',
-      [name, description, price, category, image_url]
-    );
-    res.status(201).json({ success: true });
+    const [rows] = await pool.query('SELECT * FROM categories');
+    res.json(rows);
   } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
+
+app.post('/api/admin/menu', async (req, res) => {
+  const { name, description, category_id, image_url, variants } = req.body;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const [result]: any = await connection.query(
+      'INSERT INTO products (name, description, category_id, image_url) VALUES (?, ?, ?, ?)',
+      [name, description, category_id, image_url]
+    );
+    const productId = result.insertId;
+
+    if (variants && Array.isArray(variants)) {
+      for (const v of variants) {
+        await connection.query(
+          'INSERT INTO product_variants (product_id, size_label, price) VALUES (?, ?, ?)',
+          [productId, v.size_label, v.price]
+        );
+      }
+    }
+
+    await connection.commit();
+    res.status(201).json({ success: true, id: productId });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Failed to add menu item:', err);
     res.status(500).json({ error: 'Failed to add menu item' });
+  } finally {
+    connection.release();
   }
 });
 

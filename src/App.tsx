@@ -87,6 +87,24 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Все');
   const [notifications, setNotifications] = useState<{ id: number; message: string; type: 'success' | 'info' }[]>([]);
+  
+  const newsRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (news.length > 0 && activeTab === 'home') {
+      const interval = setInterval(() => {
+        if (newsRef.current) {
+          const { scrollLeft, scrollWidth, clientWidth } = newsRef.current;
+          if (scrollLeft + clientWidth >= scrollWidth - 10) {
+            newsRef.current.scrollTo({ left: 0, behavior: 'smooth' });
+          } else {
+            newsRef.current.scrollBy({ left: clientWidth, behavior: 'smooth' });
+          }
+        }
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [news, activeTab]);
 
   const addNotification = (message: string, type: 'success' | 'info' = 'success') => {
     const id = Date.now();
@@ -415,7 +433,10 @@ export default function App() {
 
                 {/* News Carousel */}
                 <section className="relative overflow-hidden rounded-[32px]">
-                  <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory no-scrollbar pb-2">
+                  <div 
+                    ref={newsRef}
+                    className="flex gap-4 overflow-x-auto snap-x snap-mandatory no-scrollbar pb-2 scroll-smooth"
+                  >
                     {news.map((item) => (
                       <motion.div 
                         key={item.id}
@@ -1114,14 +1135,28 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
   const [orderDetails, setOrderDetails] = useState<any[]>([]);
   const [isAddingItem, setIsAddingItem] = useState(false);
+  const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
   const [newItem, setNewItem] = useState({ name: '', description: '', category_id: '', image_url: '' });
   const [newVariant, setNewVariant] = useState({ size_label: '', price: '' });
+  const [variantsToAdd, setVariantsToAdd] = useState<{ size_label: string, price: number }[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [newPromo, setNewPromo] = useState({ code: '', discount_percent: '', min_order_amount: '' });
 
   useEffect(() => {
-    if (adminTab === 'menu') fetchPromoCodes();
+    if (adminTab === 'menu') {
+      fetchPromoCodes();
+      fetchCategories();
+    }
   }, [adminTab]);
+
+  const fetchCategories = async () => {
+    try {
+      const res = await fetch('/api/admin/categories');
+      if (res.ok) setCategories(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch categories');
+    }
+  };
 
   const fetchPromoCodes = async () => {
     try {
@@ -1191,14 +1226,23 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
 
   const addMenuItem = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (variantsToAdd.length === 0) {
+      alert('Добавьте хотя бы один вариант (размер/цена)');
+      return;
+    }
     try {
       const res = await fetch('/api/admin/menu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newItem, price: parseFloat(newItem.price) })
+        body: JSON.stringify({ 
+          ...newItem, 
+          category_id: parseInt(newItem.category_id),
+          variants: variantsToAdd 
+        })
       });
       if (res.ok) {
-        setNewItem({ name: '', description: '', price: '', category: '', image_url: '' });
+        setNewItem({ name: '', description: '', category_id: '', image_url: '' });
+        setVariantsToAdd([]);
         setIsAddingItem(false);
         onUpdateMenu();
         alert('Блюдо добавлено!');
@@ -1206,6 +1250,12 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
     } catch (err) {
       alert('Ошибка при добавлении блюда');
     }
+  };
+
+  const addVariant = () => {
+    if (!newVariant.size_label || !newVariant.price) return;
+    setVariantsToAdd([...variantsToAdd, { size_label: newVariant.size_label, price: parseFloat(newVariant.price) }]);
+    setNewVariant({ size_label: '', price: '' });
   };
 
   const deleteMenuItem = async (id: number) => {
@@ -1357,11 +1407,108 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
 
           {/* Menu Section */}
           <section className="space-y-4">
-            <h3 className="text-lg font-black uppercase italic">Меню</h3>
-            <div className="p-6 bg-white/5 border border-white/10 rounded-3xl text-center">
-              <p className="text-white/40 text-xs font-bold uppercase tracking-widest">Управление меню</p>
-              <p className="text-[10px] text-white/20 mt-2">Добавление новых позиций временно доступно только через БД</p>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black uppercase italic">Меню</h3>
+              <button 
+                onClick={() => setIsAddingItem(!isAddingItem)}
+                className="p-2 bg-orange-500 text-black rounded-xl active:scale-90 transition-all"
+              >
+                {isAddingItem ? <XCircle className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+              </button>
             </div>
+
+            <AnimatePresence>
+              {isAddingItem && (
+                <motion.form 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  onSubmit={addMenuItem} 
+                  className="bg-white/5 p-6 rounded-[32px] border border-white/10 space-y-4 overflow-hidden"
+                >
+                  <input 
+                    type="text" 
+                    placeholder="Название"
+                    value={newItem.name}
+                    onChange={(e) => setNewItem({...newItem, name: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                    required
+                  />
+                  <textarea 
+                    placeholder="Описание"
+                    value={newItem.description}
+                    onChange={(e) => setNewItem({...newItem, description: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 min-h-[80px]"
+                    required
+                  />
+                  <select 
+                    value={newItem.category_id}
+                    onChange={(e) => setNewItem({...newItem, category_id: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                    required
+                  >
+                    <option value="">Выберите категорию</option>
+                    {categories.map(c => (
+                      <option key={c.id} value={c.id.toString()}>{c.name}</option>
+                    ))}
+                  </select>
+                  <input 
+                    type="url" 
+                    placeholder="URL изображения"
+                    value={newItem.image_url}
+                    onChange={(e) => setNewItem({...newItem, image_url: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                    required
+                  />
+
+                  <div className="pt-4 border-t border-white/5 space-y-3">
+                    <p className="text-[10px] font-black uppercase text-white/40 italic">Варианты (размер и цена)</p>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        placeholder="Размер (напр. 300г)"
+                        value={newVariant.size_label}
+                        onChange={(e) => setNewVariant({...newVariant, size_label: e.target.value})}
+                        className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-xs outline-none focus:border-orange-500"
+                      />
+                      <input 
+                        type="number" 
+                        placeholder="Цена"
+                        value={newVariant.price}
+                        onChange={(e) => setNewVariant({...newVariant, price: e.target.value})}
+                        className="w-24 bg-black/40 border border-white/10 rounded-xl py-2 px-3 text-xs outline-none focus:border-orange-500"
+                      />
+                      <button 
+                        type="button"
+                        onClick={addVariant}
+                        className="p-2 bg-white/10 rounded-xl hover:bg-white/20 transition-all"
+                      >
+                        <Plus className="w-5 h-5" />
+                      </button>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2">
+                      {variantsToAdd.map((v, idx) => (
+                        <div key={idx} className="bg-orange-500/10 border border-orange-500/30 rounded-lg px-3 py-1 flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-orange-500">{v.size_label}: {v.price}₽</span>
+                          <button 
+                            type="button"
+                            onClick={() => setVariantsToAdd(variantsToAdd.filter((_, i) => i !== idx))}
+                            className="text-orange-500/50 hover:text-orange-500"
+                          >
+                            <XCircle className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl text-sm uppercase italic shadow-lg shadow-orange-500/20 mt-4">
+                    Сохранить блюдо
+                  </button>
+                </motion.form>
+              )}
+            </AnimatePresence>
             
             <div className="space-y-2">
               {(Array.isArray(menu) ? menu : []).map(item => (
