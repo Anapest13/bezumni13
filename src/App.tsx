@@ -1131,7 +1131,7 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
   onUpdateStatus: () => void,
   onUpdateMenu: () => void
 }) {
-  const [adminTab, setAdminTab] = useState<'orders' | 'menu'>('orders');
+  const [adminTab, setAdminTab] = useState<'orders' | 'menu' | 'reviews'>('orders');
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
   const [orderDetails, setOrderDetails] = useState<any[]>([]);
   const [isAddingItem, setIsAddingItem] = useState(false);
@@ -1279,6 +1279,8 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
     }
   };
 
+  const ordersWithReviews = orders.filter(o => o.rating);
+
   return (
     <div className="space-y-6 pb-20">
       <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10">
@@ -1300,9 +1302,18 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
         >
           Меню
         </button>
+        <button 
+          onClick={() => setAdminTab('reviews')}
+          className={cn(
+            "flex-1 py-3 rounded-xl font-bold text-xs uppercase italic transition-all",
+            adminTab === 'reviews' ? "bg-orange-500 text-black" : "text-white/40"
+          )}
+        >
+          Отзывы
+        </button>
       </div>
 
-      {adminTab === 'orders' ? (
+      {adminTab === 'orders' && (
         <div className="space-y-4">
           {orders.map(order => (
             <div key={order.id} className="bg-white/5 border border-white/10 rounded-3xl p-5 space-y-4">
@@ -1355,7 +1366,35 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
             </div>
           ))}
         </div>
-      ) : (
+      )}
+
+      {adminTab === 'reviews' && (
+        <div className="space-y-4">
+          {ordersWithReviews.length === 0 ? (
+            <div className="text-center py-20 text-white/20 font-bold uppercase italic">Отзывов пока нет</div>
+          ) : (
+            ordersWithReviews.map(order => (
+              <div key={order.id} className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-bold text-sm">{order.customer_name}</h4>
+                    <p className="text-[10px] text-white/40 uppercase font-black">Заказ #{order.id}</p>
+                  </div>
+                  <div className="flex gap-1">
+                    {[...Array(5)].map((_, i) => (
+                      <Heart key={i} className={cn("w-3 h-3", i < (order.rating || 0) ? "text-orange-500 fill-orange-500" : "text-white/10")} />
+                    ))}
+                  </div>
+                </div>
+                <p className="text-sm italic text-white/80">"{order.review || 'Без комментария'}"</p>
+                <p className="text-[10px] text-white/20 text-right">{new Date(order.created_at).toLocaleDateString()}</p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {adminTab === 'menu' && (
         <div className="space-y-8">
           {/* Promo Codes Section */}
           <section className="space-y-4">

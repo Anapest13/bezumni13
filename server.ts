@@ -184,10 +184,10 @@ async function initDb() {
       const drinkId = await getCatId('Напитки');
 
       // Helper to add product with variants
-      const addProd = async (catId: number, name: string, desc: string, variants: {s: string, p: number}[]) => {
+      const addProd = async (catId: number, name: string, desc: string, variants: {s: string, p: number}[], imageUrl?: string) => {
         const [res]: any = await connection.query(
           'INSERT INTO products (category_id, name, description, image_url) VALUES (?, ?, ?, ?)',
-          [catId, name, desc, `https://picsum.photos/seed/${encodeURIComponent(name)}/400/300`]
+          [catId, name, desc, imageUrl || `https://picsum.photos/seed/${encodeURIComponent(name)}/400/300`]
         );
         const pid = res.insertId;
         for (const v of variants) {
@@ -213,7 +213,7 @@ async function initDb() {
       ]);
       await addProd(shaurmaId, 'Вегетарианская', 'Ароматный лаваш, фирменный соус, томаты, свежий огурец, салат капустный, картофель фри', [
         {s: '300г', p: 195}, {s: '400г', p: 235}, {s: '500г', p: 275}
-      ]);
+      ], 'https://sun9-54.userapi.com/s/v1/ig2/4XT1yEBVGU1cQA6VXHaYoxbU8t2eo30sOoM4W4MjtlaNW-S-PL_OFz1omJb3HFqmqH26XOe63JoNA6drRI75cth8.jpg?quality=95&as=32x32,48x48,72x72,108x108,160x160,240x240,360x360,480x480,540x540,640x640,720x720,1080x1080,1280x1279,1440x1439,2500x2499&from=bu&u=gImAhdZfraPYi3Hksh5uLtJnNqTJpQ4G96VBTF7Km_g&cs=540x0');
       await addProd(shaurmaId, 'Кавказская', 'Мясо цыпленка, ароматный лаваш, фирменный соус, томаты, маринованные огурчики и лук, картофель фри', [
         {s: '300г', p: 240}, {s: '400г', p: 285}, {s: '500г', p: 330}
       ]);
