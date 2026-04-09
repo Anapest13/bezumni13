@@ -252,6 +252,9 @@ export default function App() {
       const res = await fetch(`/api/promo/${promoCodeInput}`);
       if (res.ok) {
         const data = await res.json();
+        if (subtotal < (data.min_order_amount || 0)) {
+          alert(`Этот промокод действует при заказе от ${data.min_order_amount} ₽`);
+        }
         setAppliedPromo(data);
       } else {
         alert('Промокод не найден');
@@ -305,7 +308,8 @@ export default function App() {
   };
 
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const discountAmount = appliedPromo ? (subtotal * appliedPromo.discount_percent / 100) : 0;
+  const isPromoValid = appliedPromo && subtotal >= (appliedPromo.min_order_amount || 0);
+  const discountAmount = isPromoValid ? (subtotal * appliedPromo!.discount_percent / 100) : 0;
   const bonusToUse = useBonuses && user ? Math.min(user.bonus_balance, subtotal - discountAmount) : 0;
   const finalTotal = Math.max(0, subtotal - discountAmount - bonusToUse);
 
@@ -688,9 +692,19 @@ export default function App() {
                         <span>{subtotal} ₽</span>
                       </div>
                       {appliedPromo && (
-                        <div className="flex justify-between text-green-500 text-sm">
-                          <span>Скидка ({appliedPromo.discount_percent}%)</span>
-                          <span>-{discountAmount} ₽</span>
+                        <div className="space-y-1">
+                          <div className={cn(
+                            "flex justify-between text-sm",
+                            isPromoValid ? "text-green-500" : "text-white/20"
+                          )}>
+                            <span>Скидка ({appliedPromo.discount_percent}%)</span>
+                            <span>-{discountAmount} ₽</span>
+                          </div>
+                          {!isPromoValid && (
+                            <p className="text-[10px] text-orange-500/60 font-bold uppercase">
+                              Нужен заказ от {appliedPromo.min_order_amount} ₽
+                            </p>
+                          )}
                         </div>
                       )}
                       {useBonuses && (

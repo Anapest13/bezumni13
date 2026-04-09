@@ -162,6 +162,17 @@ async function initDb() {
       )
     `);
 
+    // Migration: Add min_order_amount column if it doesn't exist
+    try {
+      const [columns]: any = await connection.query('SHOW COLUMNS FROM promo_codes LIKE "min_order_amount"');
+      if (columns.length === 0) {
+        console.log('Adding min_order_amount column to promo_codes table...');
+        await connection.query('ALTER TABLE promo_codes ADD COLUMN min_order_amount DECIMAL(10, 2) DEFAULT 0 AFTER discount_percent');
+      }
+    } catch (err) {
+      console.warn('Migration for promo_codes failed or column already exists');
+    }
+
     // SEEDING DATA FROM THE IMAGE
     const [catRows]: any = await connection.query('SELECT COUNT(*) as count FROM categories');
     if (catRows[0].count === 0) {
