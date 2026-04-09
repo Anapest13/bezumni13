@@ -517,6 +517,20 @@ app.delete('/api/admin/menu/:id', async (req, res) => {
   }
 });
 
+app.patch('/api/admin/menu/:id', async (req, res) => {
+  const { name, description, image_url, is_available } = req.body;
+  try {
+    await pool.query(
+      'UPDATE products SET name = ?, description = ?, image_url = ?, is_available = ? WHERE id = ?',
+      [name, description, image_url, is_available !== undefined ? is_available : true, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to update product:', err);
+    res.status(500).json({ error: 'Failed to update product' });
+  }
+});
+
 app.patch('/api/admin/orders/:id', async (req, res) => {
   const { status, estimated_time } = req.body;
   try {
@@ -546,6 +560,11 @@ async function startServer() {
     // Serve static files from dist
     app.use(express.static(distPath, {
       setHeaders: (res, filePath) => {
+        // Disable caching to ensure changes are seen immediately
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        
         if (filePath.endsWith('.js')) {
           res.setHeader('Content-Type', 'application/javascript');
         }

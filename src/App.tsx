@@ -23,7 +23,8 @@ import {
   User as UserIcon,
   ArrowLeft,
   Search,
-  Heart
+  Heart,
+  Pencil
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1137,6 +1138,7 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
   const [newItem, setNewItem] = useState({ name: '', description: '', category_id: '', image_url: '' });
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [newVariant, setNewVariant] = useState({ size_label: '', price: '' });
   const [variantsToAdd, setVariantsToAdd] = useState<{ size_label: string, price: number }[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
@@ -1249,6 +1251,30 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
       }
     } catch (err) {
       alert('Ошибка при добавлении блюда');
+    }
+  };
+
+  const updateMenuItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingItem) return;
+    try {
+      const res = await fetch(`/api/admin/menu/${editingItem.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          name: editingItem.name,
+          description: editingItem.description,
+          image_url: editingItem.image_url,
+          is_available: editingItem.is_available
+        })
+      });
+      if (res.ok) {
+        setEditingItem(null);
+        onUpdateMenu();
+        alert('Блюдо обновлено!');
+      }
+    } catch (err) {
+      alert('Ошибка при обновлении блюда');
     }
   };
 
@@ -1547,6 +1573,58 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
                   </button>
                 </motion.form>
               )}
+
+              {editingItem && (
+                <motion.form 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  onSubmit={updateMenuItem} 
+                  className="bg-white/5 p-6 rounded-[32px] border border-orange-500/30 space-y-4 overflow-hidden"
+                >
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-sm font-black uppercase italic text-orange-500">Редактирование</h4>
+                    <button type="button" onClick={() => setEditingItem(null)}><XCircle className="w-5 h-5 text-white/20" /></button>
+                  </div>
+                  <input 
+                    type="text" 
+                    placeholder="Название"
+                    value={editingItem.name}
+                    onChange={(e) => setEditingItem({...editingItem, name: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                    required
+                  />
+                  <textarea 
+                    placeholder="Описание"
+                    value={editingItem.description}
+                    onChange={(e) => setEditingItem({...editingItem, description: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 min-h-[80px]"
+                    required
+                  />
+                  <input 
+                    type="url" 
+                    placeholder="URL изображения"
+                    value={editingItem.image_url}
+                    onChange={(e) => setEditingItem({...editingItem, image_url: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                    required
+                  />
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="checkbox" 
+                      id="is_available"
+                      checked={editingItem.is_available}
+                      onChange={(e) => setEditingItem({...editingItem, is_available: e.target.checked})}
+                      className="w-4 h-4 accent-orange-500"
+                    />
+                    <label htmlFor="is_available" className="text-xs font-bold text-white/60">В наличии</label>
+                  </div>
+
+                  <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl text-sm uppercase italic shadow-lg shadow-orange-500/20 mt-4">
+                    Обновить данные
+                  </button>
+                </motion.form>
+              )}
             </AnimatePresence>
             
             <div className="space-y-2">
@@ -1563,12 +1641,24 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
                       ))}
                     </div>
                   </div>
-                  <button 
-                    onClick={() => deleteMenuItem(item.id)}
-                    className="p-2 text-red-500/50 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex gap-1">
+                    <button 
+                      onClick={() => {
+                        setEditingItem(item);
+                        setIsAddingItem(false);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      className="p-2 text-white/20 hover:text-orange-500 transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => deleteMenuItem(item.id)}
+                      className="p-2 text-red-500/50 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
