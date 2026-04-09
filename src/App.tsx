@@ -1190,13 +1190,16 @@ function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdate
         body: JSON.stringify({
           ...newPromo,
           discount_percent: parseInt(newPromo.discount_percent),
-          min_order_amount: parseInt(newPromo.min_order_amount)
+          min_order_amount: parseFloat(newPromo.min_order_amount)
         })
       });
       if (res.ok) {
         setNewPromo({ code: '', discount_percent: '', min_order_amount: '' });
         fetchPromoCodes();
         alert('Промокод добавлен!');
+      } else {
+        const data = await res.json();
+        alert('Ошибка: ' + (data.error || 'Не удалось добавить промокод'));
       }
     } catch (err) {
       alert('Ошибка при добавлении промокода');

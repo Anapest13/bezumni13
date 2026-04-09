@@ -437,8 +437,12 @@ app.post('/api/admin/promo', async (req, res) => {
       [code, discount_percent, min_order_amount]
     );
     res.status(201).json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to add promo code' });
+  } catch (err: any) {
+    console.error('Failed to add promo code:', err);
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'Такой промокод уже существует' });
+    }
+    res.status(500).json({ error: 'Ошибка при добавлении промокода' });
   }
 });
 
