@@ -213,7 +213,7 @@ async function initDb() {
       ]);
       await addProd(shaurmaId, 'Вегетарианская', 'Ароматный лаваш, фирменный соус, томаты, свежий огурец, салат капустный, картофель фри', [
         {s: '300г', p: 195}, {s: '400г', p: 235}, {s: '500г', p: 275}
-      ], 'https://sun9-54.userapi.com/s/v1/ig2/4XT1yEBVGU1cQA6VXHaYoxbU8t2eo30sOoM4W4MjtlaNW-S-PL_OFz1omJb3HFqmqH26XOe63JoNA6drRI75cth8.jpg?quality=95&as=32x32,48x48,72x72,108x108,160x160,240x240,360x360,480x480,540x540,640x640,720x720,1080x1080,1280x1279,1440x1439,2500x2499&from=bu&u=gImAhdZfraPYi3Hksh5uLtJnNqTJpQ4G96VBTF7Km_g&cs=540x0');
+      ], 'https://www.google.com/url?sa=E&q=https%3A%2F%2Fsun9-54.userapi.com%2Fs%2Fv1%2Fig2%2F4XT1yEBVGU1cQA6VXHaYoxbU8t2eo30sOoM4W4MjtlaNW-S-PL_OFz1omJb3HFqmqH26XOe63JoNA6drRI75cth8.jpg%3Fquality%3D95%26as%3D32x32%2C48x48%2C72x72%2C108x108%2C160x160%2C240x240%2C360x360%2C480x480%2C540x540%2C640x640%2C720x720%2C1080x1080%2C1280x1279%2C1440x1439%2C2500x2499%26from%3Dbu%26u%3DgImAhdZfraPYi3Hksh5uLtJnNqTJpQ4G96VBTF7Km_g%26cs%3D540x0');
       await addProd(shaurmaId, 'Кавказская', 'Мясо цыпленка, ароматный лаваш, фирменный соус, томаты, маринованные огурчики и лук, картофель фри', [
         {s: '300г', p: 240}, {s: '400г', p: 285}, {s: '500г', p: 330}
       ]);
@@ -239,6 +239,10 @@ async function initDb() {
       await addProd(drinkId, 'Спрайт', 'Лимон-лайм', [{s: '0.33л', p: 110}, {s: '0.5л', p: 120}]);
       await addProd(drinkId, 'Морс', 'Ягодный домашний', [{s: '0.5л', p: 130}]);
 
+      await connection.query(
+        'UPDATE products SET image_url = ? WHERE name = ?',
+        ['https://www.google.com/url?sa=E&q=https%3A%2F%2Fsun9-54.userapi.com%2Fs%2Fv1%2Fig2%2F4XT1yEBVGU1cQA6VXHaYoxbU8t2eo30sOoM4W4MjtlaNW-S-PL_OFz1omJb3HFqmqH26XOe63JoNA6drRI75cth8.jpg%3Fquality%3D95%26as%3D32x32%2C48x48%2C72x72%2C108x108%2C160x160%2C240x240%2C360x360%2C480x480%2C540x540%2C640x640%2C720x720%2C1080x1080%2C1280x1279%2C1440x1439%2C2500x2499%26from%3Dbu%26u%3DgImAhdZfraPYi3Hksh5uLtJnNqTJpQ4G96VBTF7Km_g%26cs%3D540x0', 'Вегетарианская']
+      );
       console.log('Seeding complete.');
     }
 
