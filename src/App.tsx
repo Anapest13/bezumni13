@@ -348,7 +348,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans overflow-x-hidden flex justify-center">
       {/* Mobile Frame (centered on desktop, full width on mobile) */}
-      <div className="w-full md:max-w-[450px] min-h-screen bg-[#0a0a0a] relative flex flex-col shadow-2xl shadow-orange-500/10 md:border-x border-white/5">
+      <div className="w-full md:max-w-[450px] min-h-screen bg-[#0a0a0a] relative flex flex-col shadow-2xl shadow-orange-500/10 md:border-x border-white/5 pb-24">
         
         <AnimatePresence>
           {isSplashActive && (
@@ -880,7 +880,14 @@ export default function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 1.05 }}
               >
-                <AdminPanel orders={orders} menu={menu} onUpdateStatus={fetchOrders} onUpdateMenu={fetchMenu} />
+                <AdminPanel 
+                  orders={orders} 
+                  menu={menu} 
+                  news={news}
+                  onUpdateStatus={fetchOrders} 
+                  onUpdateMenu={fetchMenu} 
+                  onUpdateNews={fetchNews}
+                />
               </motion.div>
             )}
           </AnimatePresence>
@@ -1069,7 +1076,7 @@ export default function App() {
         </AnimatePresence>
 
         {/* Bottom Navigation */}
-        <nav className="absolute bottom-0 left-0 right-0 h-24 bg-black/80 backdrop-blur-xl border-t border-white/5 px-6 flex items-center justify-between z-50">
+        <nav className="fixed bottom-0 left-0 right-0 h-24 bg-black/80 backdrop-blur-xl border-t border-white/5 px-6 flex items-center justify-between z-50 max-w-[500px] mx-auto">
           <NavButton active={activeTab === 'home'} onClick={() => setActiveTab('home')} icon={<Home />} label="Главная" />
           <NavButton active={activeTab === 'menu'} onClick={() => setActiveTab('menu')} icon={<MenuIcon />} label="Меню" />
           <NavButton active={activeTab === 'cart'} onClick={() => setActiveTab('cart')} icon={<ShoppingBag />} label="Корзина" />
@@ -1126,19 +1133,24 @@ function NavButton({ active, onClick, icon, label }: { active: boolean, onClick:
   );
 }
 
-function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: { 
+function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdateNews }: { 
   orders: Order[], 
   menu: MenuItem[],
+  news: NewsItem[],
   onUpdateStatus: () => void,
-  onUpdateMenu: () => void
+  onUpdateMenu: () => void,
+  onUpdateNews: () => void
 }) {
-  const [adminTab, setAdminTab] = useState<'orders' | 'menu' | 'reviews'>('orders');
+  const [adminTab, setAdminTab] = useState<'orders' | 'menu' | 'reviews' | 'news'>('orders');
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
   const [orderDetails, setOrderDetails] = useState<any[]>([]);
   const [isAddingItem, setIsAddingItem] = useState(false);
+  const [isAddingNews, setIsAddingNews] = useState(false);
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
   const [newItem, setNewItem] = useState({ name: '', description: '', category_id: '', image_url: '' });
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+  const [newNews, setNewNews] = useState({ title: '', content: '', image_url: '', type: 'news' });
+  const [editingNews, setEditingNews] = useState<NewsItem | null>(null);
   const [newVariant, setNewVariant] = useState({ size_label: '', price: '' });
   const [variantsToAdd, setVariantsToAdd] = useState<{ size_label: string, price: number }[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
@@ -1254,6 +1266,54 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
     }
   };
 
+  const addNews = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/admin/news', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newNews)
+      });
+      if (res.ok) {
+        setNewNews({ title: '', content: '', image_url: '', type: 'news' });
+        setIsAddingNews(false);
+        onUpdateNews();
+        alert('Новость добавлена!');
+      }
+    } catch (err) {
+      alert('Ошибка при добавлении новости');
+    }
+  };
+
+  const updateNews = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingNews) return;
+    try {
+      const res = await fetch(`/api/admin/news/${editingNews.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingNews)
+      });
+      if (res.ok) {
+        setEditingNews(null);
+        onUpdateNews();
+        alert('Новость обновлена!');
+      }
+    } catch (err) {
+      alert('Ошибка при обновлении новости');
+    }
+  };
+
+  const deleteNews = async (id: number) => {
+    if (!window.confirm('Удалить эту новость?')) return;
+    try {
+      await fetch(`/api/admin/news/${id}`, { method: 'DELETE' });
+      onUpdateNews();
+    } catch (err) {
+      alert('Ошибка при удалении');
+    }
+  };
+
   const updateMenuItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingItem) return;
@@ -1337,6 +1397,15 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
         >
           Отзывы
         </button>
+        <button 
+          onClick={() => setAdminTab('news')}
+          className={cn(
+            "flex-1 py-3 rounded-xl font-bold text-xs uppercase italic transition-all",
+            adminTab === 'news' ? "bg-orange-500 text-black" : "text-white/40"
+          )}
+        >
+          Новости
+        </button>
       </div>
 
       {adminTab === 'orders' && (
@@ -1391,6 +1460,148 @@ function AdminPanel({ orders, menu, onUpdateStatus, onUpdateMenu }: {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {adminTab === 'news' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-black uppercase italic">Новости и Акции</h3>
+            <button 
+              onClick={() => setIsAddingNews(!isAddingNews)}
+              className="p-2 bg-orange-500 text-black rounded-xl active:scale-90 transition-all"
+            >
+              {isAddingNews ? <XCircle className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {isAddingNews && (
+              <motion.form 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                onSubmit={addNews} 
+                className="bg-white/5 p-6 rounded-[32px] border border-white/10 space-y-4 overflow-hidden"
+              >
+                <input 
+                  type="text" 
+                  placeholder="Заголовок"
+                  value={newNews.title}
+                  onChange={(e) => setNewNews({...newNews, title: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                  required
+                />
+                <textarea 
+                  placeholder="Текст новости"
+                  value={newNews.content}
+                  onChange={(e) => setNewNews({...newNews, content: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 min-h-[80px]"
+                  required
+                />
+                <input 
+                  type="url" 
+                  placeholder="URL изображения"
+                  value={newNews.image_url}
+                  onChange={(e) => setNewNews({...newNews, image_url: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                  required
+                />
+                <select 
+                  value={newNews.type}
+                  onChange={(e) => setNewNews({...newNews, type: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                >
+                  <option value="news">Новость</option>
+                  <option value="promo">Акция</option>
+                </select>
+
+                <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl text-sm uppercase italic shadow-lg shadow-orange-500/20 mt-4">
+                  Добавить новость
+                </button>
+              </motion.form>
+            )}
+
+            {editingNews && (
+              <motion.form 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                onSubmit={updateNews} 
+                className="bg-white/5 p-6 rounded-[32px] border border-orange-500/30 space-y-4 overflow-hidden"
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-sm font-black uppercase italic text-orange-500">Редактирование новости</h4>
+                  <button type="button" onClick={() => setEditingNews(null)}><XCircle className="w-5 h-5 text-white/20" /></button>
+                </div>
+                <input 
+                  type="text" 
+                  placeholder="Заголовок"
+                  value={editingNews.title}
+                  onChange={(e) => setEditingNews({...editingNews, title: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                  required
+                />
+                <textarea 
+                  placeholder="Текст новости"
+                  value={editingNews.content}
+                  onChange={(e) => setEditingNews({...editingNews, content: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 min-h-[80px]"
+                  required
+                />
+                <input 
+                  type="url" 
+                  placeholder="URL изображения"
+                  value={editingNews.image_url}
+                  onChange={(e) => setEditingNews({...editingNews, image_url: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                  required
+                />
+                <select 
+                  value={editingNews.type}
+                  onChange={(e) => setEditingNews({...editingNews, type: e.target.value as any})}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                >
+                  <option value="news">Новость</option>
+                  <option value="promo">Акция</option>
+                </select>
+
+                <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl text-sm uppercase italic shadow-lg shadow-orange-500/20 mt-4">
+                  Обновить новость
+                </button>
+              </motion.form>
+            )}
+          </AnimatePresence>
+
+          <div className="space-y-2">
+            {news.map(item => (
+              <div key={item.id} className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-3">
+                <img src={item.image_url} className="w-12 h-12 rounded-xl object-cover" referrerPolicy="no-referrer" />
+                <div className="flex-1">
+                  <h4 className="font-bold text-xs">{item.title}</h4>
+                  <p className="text-[8px] text-white/40 line-clamp-1">{item.content}</p>
+                </div>
+                <div className="flex gap-1">
+                  <button 
+                    onClick={() => {
+                      setEditingNews(item);
+                      setIsAddingNews(false);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="p-2 text-white/20 hover:text-orange-500 transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => deleteNews(item.id)}
+                    className="p-2 text-red-500/50 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

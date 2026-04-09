@@ -545,6 +545,42 @@ app.patch('/api/admin/orders/:id', async (req, res) => {
   }
 });
 
+// News Management
+app.post('/api/admin/news', async (req, res) => {
+  const { title, content, image_url, type } = req.body;
+  try {
+    await pool.query(
+      'INSERT INTO news (title, content, image_url, type) VALUES (?, ?, ?, ?)',
+      [title, content, image_url, type || 'news']
+    );
+    res.status(201).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to add news' });
+  }
+});
+
+app.patch('/api/admin/news/:id', async (req, res) => {
+  const { title, content, image_url, type } = req.body;
+  try {
+    await pool.query(
+      'UPDATE news SET title = ?, content = ?, image_url = ?, type = ? WHERE id = ?',
+      [title, content, image_url, type, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update news' });
+  }
+});
+
+app.delete('/api/admin/news/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM news WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete news' });
+  }
+});
+
 // Vite Integration
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
