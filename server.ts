@@ -177,6 +177,12 @@ async function initDb() {
         console.log('Adding min_order_amount column to promo_codes table...');
         await connection.query('ALTER TABLE promo_codes ADD COLUMN min_order_amount DECIMAL(10, 2) DEFAULT 0 AFTER discount_percent');
       }
+      
+      const [limitCol]: any = await connection.query('SHOW COLUMNS FROM promo_codes LIKE "usage_limit"');
+      if (limitCol.length === 0) {
+        console.log('Adding usage columns to promo_codes...');
+        await connection.query('ALTER TABLE promo_codes ADD COLUMN usage_limit INT DEFAULT NULL, ADD COLUMN used_count INT DEFAULT 0');
+      }
     } catch (err) {
       console.warn('Migration for promo_codes failed or column already exists');
     }
@@ -361,8 +367,11 @@ app.get('/api/news', async (req, res) => {
 // Promo Codes
 app.get('/api/promo/:code', async (req, res) => {
   try {
-    const [rows]: any = await pool.query('SELECT * FROM promo_codes WHERE code = ? AND is_active = TRUE', [req.params.code]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Invalid promo code' });
+    const [rows]: any = await pool.query(
+      'SELECT * FROM promo_codes WHERE code = ? AND is_active = TRUE AND (usage_limit IS NULL OR used_count < usage_limit)',
+      [req.params.code]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Промокод недействителен или исчерпан' });
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to check promo code' });
@@ -423,7 +432,7 @@ app.get('/api/products/popular', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   if (!process.env.DB_HOST) return res.status(503).json({ error: 'Database not configured' });
-  const { user_id, customer_name, customer_phone, items, total_amount, discount_amount, bonuses_used } = req.body;
+  const { user_id, customer_name, customer_phone, items, total_amount, discount_amount, bonuses_used, promo_code } = req.body;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -456,6 +465,11 @@ app.post('/api/orders', async (req, res) => {
       );
     }
 
+    // 4. Increment Promo Usage
+    if (promo_code) {
+      await connection.query('UPDATE promo_codes SET used_count = used_count + 1 WHERE code = ?', [promo_code]);
+    }
+
     await connection.commit();
     res.status(201).json({ id: orderId, status: 'pending' });
   } catch (err) {
@@ -478,11 +492,11 @@ app.get('/api/admin/promo', async (req, res) => {
 });
 
 app.post('/api/admin/promo', async (req, res) => {
-  const { code, discount_percent, min_order_amount } = req.body;
+  const { code, discount_percent, min_order_amount, usage_limit } = req.body;
   try {
     await pool.query(
-      'INSERT INTO promo_codes (code, discount_percent, min_order_amount) VALUES (?, ?, ?)',
-      [code, discount_percent, min_order_amount]
+      'INSERT INTO promo_codes (code, discount_percent, min_order_amount, usage_limit) VALUES (?, ?, ?, ?)',
+      [code, discount_percent, min_order_amount, usage_limit || null]
     );
     res.status(201).json({ success: true });
   } catch (err: any) {
@@ -491,6 +505,47 @@ app.post('/api/admin/promo', async (req, res) => {
       return res.status(400).json({ error: 'Такой промокод уже существует' });
     }
     res.status(500).json({ error: 'Ошибка при добавлении промокода' });
+  }
+});
+
+app.patch('/api/admin/promo/:id', async (req, res) => {
+  const { code, discount_percent, min_order_amount, usage_limit, is_active } = req.body;
+  try {
+    await pool.query(
+      'UPDATE promo_codes SET code = ?, discount_percent = ?, min_order_amount = ?, usage_limit = ?, is_active = ? WHERE id = ?',
+      [code, discount_percent, min_order_amount, usage_limit || null, is_active, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update promo code' });
+  }
+});
+
+app.delete('/api/admin/promo/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM promo_codes WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete promo code' });
+  }
+});
+
+app.get('/api/admin/stats/reviews', async (req, res) => {
+  try {
+    const statsQuery = `
+      SELECT 
+        AVG(CASE WHEN created_at >= CURDATE() THEN rating END) as avg_day,
+        AVG(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) THEN rating END) as avg_week,
+        AVG(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN rating END) as avg_month,
+        COUNT(rating) as total_reviews
+      FROM orders 
+      WHERE rating IS NOT NULL
+    `;
+    const [rows]: any = await pool.query(statsQuery);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Stats error:', err);
+    res.status(500).json({ error: 'Failed to fetch review stats' });
   }
 });
 

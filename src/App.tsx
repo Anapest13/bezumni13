@@ -69,7 +69,14 @@ export default function App() {
   const [menu, setMenu] = useState<MenuItem[]>(SAMPLE_MENU);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const saved = localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authForm, setAuthForm] = useState({ phone: '', email: '', password: '', name: '' });
@@ -89,8 +96,24 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Все');
   const [notifications, setNotifications] = useState<{ id: number; message: string; type: 'success' | 'info' }[]>([]);
+  const [openedNews, setOpenedNews] = useState<NewsItem | null>(null);
+  const [reviewModal, setReviewModal] = useState<{ orderId: number; rating: number; review: string } | null>(null);
+  const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   
   const newsRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetchPromoCodes();
+  }, []);
+
+  const fetchPromoCodes = async () => {
+    try {
+      const res = await fetch('/api/admin/promo?t=' + Date.now());
+      if (res.ok) setPromoCodes(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch promo codes');
+    }
+  };
 
   useEffect(() => {
     if (news.length > 0 && activeTab === 'home') {
@@ -342,7 +365,8 @@ export default function App() {
       items: cart,
       total_amount: finalTotal,
       discount_amount: discountAmount,
-      bonuses_used: bonusToUse
+      bonuses_used: bonusToUse,
+      promo_code: isPromoValid ? appliedPromo?.code : null
     };
 
     try {
@@ -461,7 +485,8 @@ export default function App() {
                     {news.map((item) => (
                       <motion.div 
                         key={item.id}
-                        className="relative min-w-full h-48 rounded-[32px] overflow-hidden bg-zinc-900 snap-center shrink-0"
+                        onClick={() => setOpenedNews(item)}
+                        className="relative min-w-full h-48 rounded-[32px] overflow-hidden bg-zinc-900 snap-center shrink-0 cursor-pointer"
                       >
                         <img src={item.image_url} className="absolute inset-0 w-full h-full object-cover opacity-60" referrerPolicy="no-referrer" />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent p-6 flex flex-col justify-end">
@@ -846,18 +871,10 @@ export default function App() {
                                 {[1, 2, 3, 4, 5].map(star => (
                                   <button 
                                     key={star}
-                                    onClick={async () => {
-                                      const review = prompt('Оставьте отзыв (необязательно):');
-                                      await fetch(`/api/orders/${order.id}/review`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ rating: star, review })
-                                      });
-                                      fetchUserOrders();
-                                    }}
+                                    onClick={() => setReviewModal({ orderId: order.id, rating: star, review: '' })}
                                     className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center hover:bg-orange-500 hover:text-black transition-all"
                                   >
-                                    <Heart className="w-5 h-5" />
+                                    <Heart className="w-5 h-5 text-white/20" />
                                   </button>
                                 ))}
                               </div>
@@ -891,11 +908,14 @@ export default function App() {
               >
                 <AdminPanel 
                   orders={orders} 
+                  user={user}
                   menu={menu} 
                   news={news}
+                  promoCodes={promoCodes}
                   onUpdateStatus={fetchOrders} 
                   onUpdateMenu={fetchMenu} 
                   onUpdateNews={fetchNews}
+                  onUpdatePromo={fetchPromoCodes}
                 />
               </motion.div>
             )}
@@ -1136,6 +1156,125 @@ export default function App() {
             ))}
           </AnimatePresence>
         </div>
+
+        {/* Review Modal */}
+        <AnimatePresence>
+          {reviewModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-xl z-[100] flex items-center justify-center p-6"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-zinc-900 border border-white/10 p-8 rounded-[40px] w-full max-w-sm space-y-6"
+              >
+                <div className="text-center space-y-2">
+                  <h3 className="text-2xl font-black uppercase italic">Ваш отзыв</h3>
+                  <p className="text-white/40 text-sm font-bold">Помогите нам стать лучше</p>
+                </div>
+
+                <div className="flex justify-center gap-2">
+                  {[1, 2, 3, 4, 5].map(star => (
+                     <button
+                      key={star}
+                      onClick={() => setReviewModal({ ...reviewModal, rating: star })}
+                      className="group"
+                    >
+                      <Heart className={cn(
+                        "w-10 h-10 transition-all",
+                        star <= reviewModal.rating ? "text-orange-500 fill-orange-500 scale-110" : "text-white/20 hover:text-orange-500/50"
+                      )} />
+                    </button>
+                  ))}
+                </div>
+
+                <textarea
+                  value={reviewModal.review}
+                  onChange={(e) => setReviewModal({ ...reviewModal, review: e.target.value })}
+                  placeholder="Что вам особенно понравилось?"
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm font-bold placeholder:text-white/20 outline-none focus:border-orange-500 transition-all min-h-[120px] resize-none text-white font-bold"
+                />
+
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => setReviewModal(null)}
+                    className="flex-1 bg-white/5 h-14 rounded-2xl font-black uppercase italic text-sm hover:bg-white/10 transition-all"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await fetch(`/api/orders/${reviewModal.orderId}/review`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rating: reviewModal.rating, review: reviewModal.review })
+                      });
+                      setReviewModal(null);
+                      fetchUserOrders();
+                      addNotification('Спасибо за ваш отзыв!', 'success');
+                    }}
+                    className="flex-[2] bg-orange-500 text-black h-14 rounded-2xl font-black uppercase italic text-sm shadow-xl shadow-orange-500/20 hover:scale-105 active:scale-95 transition-all"
+                  >
+                    Отправить
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* News Modal */}
+        <AnimatePresence>
+          {openedNews && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-xl z-[100] flex items-center justify-center p-6"
+            >
+              <motion.div
+                initial={{ y: 50, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                className="bg-zinc-900 border border-white/10 rounded-[48px] w-full max-w-lg overflow-hidden relative"
+              >
+                <button
+                  onClick={() => setOpenedNews(null)}
+                  className="absolute top-6 right-6 w-12 h-12 bg-black/50 backdrop-blur-md rounded-full flex items-center justify-center text-white z-10 hover:bg-white hover:text-black transition-all"
+                >
+                  <XCircle className="w-6 h-6" />
+                </button>
+
+                <div className="h-64 relative">
+                  <img src={openedNews.image_url} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-transparent to-transparent pointer-events-none" />
+                </div>
+
+                <div className="p-10 space-y-6">
+                  <div className="space-y-2">
+                    <div className="inline-block bg-orange-500 text-black px-4 py-1.5 rounded-full text-xs font-black uppercase italic shadow-lg shadow-orange-500/20 mb-2">
+                      {openedNews.type === 'promo' ? 'Акция' : 'Новость'}
+                    </div>
+                    <h2 className="text-4xl font-black uppercase italic leading-none">{openedNews.title}</h2>
+                  </div>
+                  
+                  <p className="text-white/60 font-bold leading-relaxed whitespace-pre-wrap">{openedNews.content}</p>
+
+                  <div className="pt-6">
+                    <button
+                      onClick={() => setOpenedNews(null)}
+                      className="w-full h-16 bg-white/5 border border-white/10 rounded-2xl font-black uppercase italic text-lg hover:bg-white/10 transition-all font-bold"
+                    >
+                      Понятно
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -1161,17 +1300,36 @@ function NavButton({ active, onClick, icon, label }: { active: boolean, onClick:
   );
 }
 
-function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdateNews }: { 
+function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUpdateMenu, onUpdateNews, onUpdatePromo }: { 
   orders: Order[], 
+  user: User | null,
   menu: MenuItem[],
   news: NewsItem[],
+  promoCodes: PromoCode[],
   onUpdateStatus: () => void,
   onUpdateMenu: () => void,
-  onUpdateNews: () => void
+  onUpdateNews: () => void,
+  onUpdatePromo: () => void
 }) {
   const [adminTab, setAdminTab] = useState<'orders' | 'menu' | 'reviews' | 'news'>('orders');
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
   const [orderDetails, setOrderDetails] = useState<any[]>([]);
+  const [reviewStats, setReviewStats] = useState<{ avg_day: number; avg_week: number; avg_month: number; total_reviews: number } | null>(null);
+
+  useEffect(() => {
+    if (adminTab === 'reviews') {
+      fetchReviewStats();
+    }
+  }, [adminTab]);
+
+  const fetchReviewStats = async () => {
+    try {
+      const res = await fetch('/api/admin/stats/reviews?t=' + Date.now());
+      if (res.ok) setReviewStats(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch review stats');
+    }
+  };
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [isAddingNews, setIsAddingNews] = useState(false);
   const [categories, setCategories] = useState<{id: number, name: string}[]>([]);
@@ -1181,12 +1339,10 @@ function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdate
   const [editingNews, setEditingNews] = useState<NewsItem | null>(null);
   const [newVariant, setNewVariant] = useState({ size_label: '', price: '' });
   const [variantsToAdd, setVariantsToAdd] = useState<{ size_label: string, price: number }[]>([]);
-  const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
-  const [newPromo, setNewPromo] = useState({ code: '', discount_percent: '', min_order_amount: '' });
+  const [newPromo, setNewPromo] = useState({ code: '', discount_percent: '', min_order_amount: '', usage_limit: '' });
 
   useEffect(() => {
     if (adminTab === 'menu') {
-      fetchPromoCodes();
       fetchCategories();
     }
   }, [adminTab]);
@@ -1200,15 +1356,6 @@ function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdate
     }
   };
 
-  const fetchPromoCodes = async () => {
-    try {
-      const res = await fetch('/api/admin/promo');
-      if (res.ok) setPromoCodes(await res.json());
-    } catch (err) {
-      console.error('Failed to fetch promo codes');
-    }
-  };
-
   const addPromoCode = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -1218,12 +1365,14 @@ function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdate
         body: JSON.stringify({
           ...newPromo,
           discount_percent: parseInt(newPromo.discount_percent),
-          min_order_amount: parseFloat(newPromo.min_order_amount)
+          min_order_amount: parseFloat(newPromo.min_order_amount),
+          usage_limit: newPromo.usage_limit ? parseInt(newPromo.usage_limit) : null
         })
       });
       if (res.ok) {
-        setNewPromo({ code: '', discount_percent: '', min_order_amount: '' });
-        fetchPromoCodes();
+        setNewPromo({ code: '', discount_percent: '', min_order_amount: '', usage_limit: '' });
+        onUpdatePromo();
+        // Notification could be used here if passed as prop, but let's stick to simple alert for admin
         alert('Промокод добавлен!');
       } else {
         const data = await res.json();
@@ -1231,6 +1380,29 @@ function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdate
       }
     } catch (err) {
       alert('Ошибка при добавлении промокода');
+    }
+  };
+
+  const deletePromo = async (id: number) => {
+    if (!window.confirm('Удалить этот промокод?')) return;
+    try {
+      const res = await fetch(`/api/admin/promo/${id}`, { method: 'DELETE' });
+      if (res.ok) onUpdatePromo();
+    } catch (err) {
+      alert('Ошибка удаления');
+    }
+  };
+
+  const togglePromoStatus = async (promo: PromoCode) => {
+    try {
+      const res = await fetch(`/api/admin/promo/${promo.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...promo, is_active: !promo.is_active })
+      });
+      if (res.ok) onUpdatePromo();
+    } catch (err) {
+      alert('Ошибка обновления');
     }
   };
 
@@ -1637,28 +1809,58 @@ function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdate
       )}
 
       {adminTab === 'reviews' && (
-        <div className="space-y-4">
-          {ordersWithReviews.length === 0 ? (
-            <div className="text-center py-20 text-white/20 font-bold uppercase italic">Отзывов пока нет</div>
-          ) : (
-            ordersWithReviews.map(order => (
-              <div key={order.id} className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="font-bold text-sm">{order.customer_name}</h4>
-                    <p className="text-[10px] text-white/40 uppercase font-black">Заказ #{order.id}</p>
-                  </div>
-                  <div className="flex gap-1">
-                    {[...Array(5)].map((_, i) => (
-                      <Heart key={i} className={cn("w-3 h-3", i < (order.rating || 0) ? "text-orange-500 fill-orange-500" : "text-white/10")} />
-                    ))}
-                  </div>
+        <div className="space-y-6">
+          {reviewStats && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
+                <p className="text-[10px] font-black uppercase italic text-white/40 mb-1">День</p>
+                <div className="flex items-center justify-center gap-1">
+                  <span className="text-xl font-black italic">{Number(reviewStats.avg_day || 0).toFixed(1)}</span>
+                  <Heart className="w-3 h-3 text-orange-500 fill-orange-500" />
                 </div>
-                <p className="text-sm italic text-white/80">"{order.review || 'Без комментария'}"</p>
-                <p className="text-[10px] text-white/20 text-right">{new Date(order.created_at).toLocaleDateString()}</p>
               </div>
-            ))
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
+                <p className="text-[10px] font-black uppercase italic text-white/40 mb-1">Неделя</p>
+                <div className="flex items-center justify-center gap-1">
+                  <span className="text-xl font-black italic">{Number(reviewStats.avg_week || 0).toFixed(1)}</span>
+                  <Heart className="w-3 h-3 text-orange-500 fill-orange-500" />
+                </div>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
+                <p className="text-[10px] font-black uppercase italic text-white/40 mb-1">Месяц</p>
+                <div className="flex items-center justify-center gap-1">
+                  <span className="text-xl font-black italic">{Number(reviewStats.avg_month || 0).toFixed(1)}</span>
+                  <Heart className="w-3 h-3 text-orange-500 fill-orange-500" />
+                </div>
+              </div>
+            </div>
           )}
+
+          <div className="space-y-4">
+            {ordersWithReviews.length === 0 ? (
+              <div className="text-center py-20 text-white/20 font-bold uppercase italic">Отзывов пока нет</div>
+            ) : (
+              ordersWithReviews.map(order => (
+                <div key={order.id} className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-bold text-sm tracking-tight">{order.customer_name}</h4>
+                      <p className="text-[10px] text-white/40 uppercase font-black tracking-widest">Заказ #{order.id}</p>
+                    </div>
+                    <div className="flex gap-1">
+                      {[...Array(5)].map((_, i) => (
+                        <Heart key={i} className={cn("w-3 h-3 transition-colors", i < (order.rating || 0) ? "text-orange-500 fill-orange-500" : "text-white/10")} />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-black/40 rounded-2xl p-4 border border-white/5">
+                    <p className="text-sm italic text-white/80 leading-relaxed font-medium">"{order.review || 'Без комментария'}"</p>
+                  </div>
+                  <p className="text-[10px] text-white/20 text-right font-bold uppercase italic">{new Date(order.created_at).toLocaleDateString()}</p>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 
@@ -1667,46 +1869,87 @@ function AdminPanel({ orders, menu, news, onUpdateStatus, onUpdateMenu, onUpdate
           {/* Promo Codes Section */}
           <section className="space-y-4">
             <h3 className="text-lg font-black uppercase italic">Промокоды</h3>
-            <form onSubmit={addPromoCode} className="bg-white/5 p-4 rounded-3xl border border-white/10 space-y-3">
+            <form onSubmit={addPromoCode} className="bg-white/5 p-6 rounded-[32px] border border-white/10 space-y-4">
               <input 
                 type="text" 
                 placeholder="Код (например: COOL)"
                 value={newPromo.code}
-                onChange={(e) => setNewPromo({...newPromo, code: e.target.value})}
-                className="w-full bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-xs outline-none focus:border-orange-500"
+                onChange={(e) => setNewPromo({...newPromo, code: e.target.value.toUpperCase()})}
+                className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 transition-all font-bold"
                 required
               />
-              <div className="flex gap-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-black uppercase text-white/20 ml-2 italic">Скидка %</p>
+                  <input 
+                    type="number" 
+                    placeholder="20"
+                    value={newPromo.discount_percent}
+                    onChange={(e) => setNewPromo({...newPromo, discount_percent: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-sm outline-none focus:border-orange-500 font-bold"
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-[10px] font-black uppercase text-white/20 ml-2 italic">Мин. сумма (₽)</p>
+                  <input 
+                    type="number" 
+                    placeholder="1000"
+                    value={newPromo.min_order_amount}
+                    onChange={(e) => setNewPromo({...newPromo, min_order_amount: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-sm outline-none focus:border-orange-500 font-bold"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-black uppercase text-white/20 ml-2 italic">Лимит использований (необяз.)</p>
                 <input 
                   type="number" 
-                  placeholder="Скидка %"
-                  value={newPromo.discount_percent}
-                  onChange={(e) => setNewPromo({...newPromo, discount_percent: e.target.value})}
-                  className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-xs outline-none focus:border-orange-500"
-                  required
-                />
-                <input 
-                  type="number" 
-                  placeholder="Мин. сумма"
-                  value={newPromo.min_order_amount}
-                  onChange={(e) => setNewPromo({...newPromo, min_order_amount: e.target.value})}
-                  className="flex-1 bg-black/40 border border-white/10 rounded-xl py-2 px-4 text-xs outline-none focus:border-orange-500"
-                  required
+                  placeholder="Общее кол-во"
+                  value={newPromo.usage_limit || ''}
+                  onChange={(e) => setNewPromo({...newPromo, usage_limit: e.target.value})}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl py-3 px-4 text-sm outline-none focus:border-orange-500 font-bold"
                 />
               </div>
-              <button className="w-full bg-orange-500 text-black font-black py-2 rounded-xl text-xs uppercase italic">
+              <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl text-sm uppercase italic shadow-lg shadow-orange-500/20 active:scale-95 transition-all">
                 Добавить промокод
               </button>
             </form>
 
-            <div className="grid grid-cols-1 gap-2">
+            <div className="grid grid-cols-1 gap-3">
               {promoCodes.map(promo => (
-                <div key={promo.id} className="bg-white/5 border border-white/10 rounded-2xl p-3 flex justify-between items-center">
-                  <div>
-                    <span className="font-black italic text-orange-500">{promo.code}</span>
-                    <span className="text-[10px] text-white/40 ml-2">-{promo.discount_percent}% от {promo.min_order_amount} ₽</span>
+                <div key={promo.id} className={cn(
+                  "bg-white/5 border rounded-3xl p-5 flex justify-between items-center transition-all",
+                  promo.is_active ? "border-white/10" : "border-red-500/20 opacity-60"
+                )}>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-black italic text-xl uppercase text-white leading-none">{promo.code}</span>
+                      <div className={cn("w-1.5 h-1.5 rounded-full", promo.is_active ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : "bg-red-500")} />
+                    </div>
+                    <p className="text-[10px] font-bold text-white/40 uppercase italic tracking-wider">
+                      -{promo.discount_percent}% • от {promo.min_order_amount} ₽
+                      {promo.usage_limit && ` • ${promo.used_count}/${promo.usage_limit}`}
+                    </p>
                   </div>
-                  <div className={cn("w-2 h-2 rounded-full", promo.is_active ? "bg-green-500" : "bg-red-500")} />
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => togglePromoStatus(promo)}
+                      className={cn(
+                        "p-3 rounded-xl transition-all",
+                        promo.is_active ? "bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white" : "bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-white"
+                      )}
+                    >
+                      {promo.is_active ? <XCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+                    </button>
+                    <button 
+                      onClick={() => deletePromo(promo.id)}
+                      className="p-3 bg-white/5 text-white/20 hover:bg-red-500 hover:text-white rounded-xl transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

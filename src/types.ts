@@ -35,6 +35,8 @@ export interface PromoCode {
   code: string;
   discount_percent: number;
   min_order_amount: number;
+  usage_limit: number | null;
+  used_count: number;
   is_active: boolean;
 }
 
