@@ -74,6 +74,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authForm, setAuthForm] = useState({ phone: '', email: '', password: '', name: '' });
   const [userOrders, setUserOrders] = useState<Order[]>([]);
+  const [popularProducts, setPopularProducts] = useState<MenuItem[]>([]);
   const [news, setNews] = useState<NewsItem[]>([]);
   
   const [customizingItem, setCustomizingItem] = useState<{ product: MenuItem, variant: ProductVariant } | null>(null);
@@ -139,11 +140,17 @@ export default function App() {
     const timer = setTimeout(() => setIsSplashActive(false), 2000);
     fetchMenu();
     fetchNews();
+    fetchPopularProducts();
     
     // Poll for orders if logged in
     let pollInterval: NodeJS.Timeout;
     if (user) {
-      pollInterval = setInterval(fetchUserOrders, 10000);
+      pollInterval = setInterval(() => {
+        fetchUserOrders();
+        if (user.role === 'admin') {
+          fetchOrders();
+        }
+      }, 10000);
     }
 
     return () => {
@@ -183,7 +190,7 @@ export default function App() {
 
   const fetchNews = async () => {
     try {
-      const res = await fetch('/api/news');
+      const res = await fetch(`/api/news?t=${Date.now()}`);
       if (res.ok) setNews(await res.json());
     } catch (err) {
       console.error('Failed to fetch news');
@@ -193,16 +200,25 @@ export default function App() {
   const fetchUserOrders = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/user/${user.id}/orders`);
+      const res = await fetch(`/api/user/${user.id}/orders?t=${Date.now()}`);
       if (res.ok) setUserOrders(await res.json());
     } catch (err) {
       console.error('Failed to fetch user orders');
     }
   };
 
+  const fetchPopularProducts = async () => {
+    try {
+      const res = await fetch(`/api/products/popular?t=${Date.now()}`);
+      if (res.ok) setPopularProducts(await res.json());
+    } catch (err) {
+      console.error('Failed to fetch popular products');
+    }
+  };
+
   const fetchMenu = async () => {
     try {
-      const res = await fetch('/api/menu');
+      const res = await fetch(`/api/menu?t=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
         if (data.length > 0) setMenu(data);
@@ -214,7 +230,7 @@ export default function App() {
 
   const fetchOrders = async () => {
     try {
-      const res = await fetch('/api/admin/orders');
+      const res = await fetch(`/api/admin/orders?t=${Date.now()}`);
       if (res.ok) {
         const data = await res.json();
         setOrders(data);
@@ -460,34 +476,13 @@ export default function App() {
                   </div>
                 </section>
 
-                {/* Categories */}
-                <section>
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-black uppercase italic">Категории</h3>
-                  </div>
-                  <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
-                    {categories.map((cat) => (
-                      <button 
-                        key={cat}
-                        onClick={() => setSelectedCategory(cat)}
-                        className={cn(
-                          "px-6 py-3 rounded-2xl font-bold text-sm whitespace-nowrap transition-all active:scale-95",
-                          selectedCategory === cat ? "bg-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/5 border border-white/10"
-                        )}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
                 {/* Popular Items */}
                 <section>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-black uppercase italic">Популярное</h3>
                   </div>
                   <div className="grid grid-cols-1 gap-4">
-                    {(Array.isArray(menu) ? menu : []).slice(0, 3).map(item => (
+                    {popularProducts.map(item => (
                       <div key={item.id} className="bg-white/5 border border-white/10 rounded-[28px] p-4 flex gap-4 group hover:border-orange-500/30 transition-all">
                         <div className="w-24 h-24 rounded-2xl overflow-hidden shrink-0">
                           <img src={item.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" referrerPolicy="no-referrer" />
@@ -928,44 +923,63 @@ export default function App() {
                   {authMode === 'login' ? 'Вход' : 'Регистрация'}
                 </h3>
                 <form onSubmit={handleAuth} className="space-y-4">
-                  {authMode === 'register' && (
-                    <input 
-                      type="text" 
-                      placeholder="Имя"
-                      value={authForm.name}
-                      onChange={(e) => setAuthForm({...authForm, name: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                      required
-                    />
-                  )}
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон или Email</p>
-                    <input 
-                      type="text" 
-                      placeholder="+7 (___) ___-__-__ или email@example.com"
-                      value={authForm.phone}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        // If it looks like a phone (starts with + or digits), apply mask
-                        if (/^[\d+]/.test(val) && !val.includes('@')) {
-                          setAuthForm({...authForm, phone: formatPhone(val)});
-                        } else {
-                          setAuthForm({...authForm, phone: val});
-                        }
-                      }}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                      required
-                    />
-                  </div>
-                  {authMode === 'register' && (
-                    <input 
-                      type="email" 
-                      placeholder="Email для уведомлений"
-                      value={authForm.email}
-                      onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                      required
-                    />
+                  {authMode === 'login' ? (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон или Email</p>
+                      <input 
+                        type="text" 
+                        placeholder="+7 (___) ___-__-__ или email@example.com"
+                        value={authForm.phone}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/^[\d+]/.test(val) && !val.includes('@')) {
+                            setAuthForm({...authForm, phone: formatPhone(val)});
+                          } else {
+                            setAuthForm({...authForm, phone: val});
+                          }
+                        }}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                        required
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {authMode === 'register' && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Имя</p>
+                          <input 
+                            type="text" 
+                            placeholder="Имя"
+                            value={authForm.name}
+                            onChange={(e) => setAuthForm({...authForm, name: e.target.value})}
+                            className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                            required
+                          />
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон</p>
+                        <input 
+                          type="tel" 
+                          placeholder="+7 (___) ___-__-__"
+                          value={authForm.phone}
+                          onChange={(e) => setAuthForm({...authForm, phone: formatPhone(e.target.value)})}
+                          className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Email</p>
+                        <input 
+                          type="email" 
+                          placeholder="email@example.com"
+                          value={authForm.email}
+                          onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
+                          className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                          required
+                        />
+                      </div>
+                    </div>
                   )}
                   <input 
                     type="password" 

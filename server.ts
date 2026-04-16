@@ -13,6 +13,14 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
+// Set Cache-Control for all API requests to prevent stale data
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
+
 // MySQL Connection Pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -381,6 +389,35 @@ app.get('/api/menu', async (req, res) => {
     res.json(menu);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch menu' });
+  }
+});
+
+app.get('/api/products/popular', async (req, res) => {
+  try {
+    const [products]: any = await pool.query(`
+      SELECT p.*, c.name as category_name, SUM(oi.quantity) as sales_count
+      FROM products p
+      JOIN categories c ON p.category_id = c.id
+      JOIN product_variants pv ON p.id = pv.product_id
+      LEFT JOIN order_items oi ON pv.id = oi.variant_id
+      LEFT JOIN orders o ON oi.order_id = o.id AND o.status != 'cancelled'
+      WHERE p.is_available = TRUE
+      GROUP BY p.id
+      ORDER BY COALESCE(sales_count, 0) DESC, p.id ASC
+      LIMIT 3
+    `);
+    
+    const [variants]: any = await pool.query('SELECT * FROM product_variants');
+    
+    const popular = products.map((p: any) => ({
+      ...p,
+      variants: variants.filter((v: any) => v.product_id === p.id)
+    }));
+    
+    res.json(popular);
+  } catch (err) {
+    console.error('Failed to fetch popular products:', err);
+    res.status(500).json({ error: 'Failed to fetch popular products' });
   }
 });
 
