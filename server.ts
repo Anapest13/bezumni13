@@ -166,6 +166,8 @@ async function initDb() {
         code VARCHAR(50) UNIQUE NOT NULL,
         discount_percent INT NOT NULL,
         min_order_amount DECIMAL(10, 2) DEFAULT 0,
+        usage_limit INT DEFAULT NULL,
+        used_count INT DEFAULT 0,
         is_active BOOLEAN DEFAULT TRUE
       )
     `);
