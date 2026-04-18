@@ -1,0 +1,103 @@
+ <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Фоновый градиент (оранжевый) -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF9A00"/>
+      <stop offset="100%" stop-color="#E65C00"/>
+    </radialGradient>
+    <!-- Градиент для шаурмы -->
+    <linearGradient id="lavash" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F5DEB3"/>
+      <stop offset="100%" stop-color="#D2B48C"/>
+    </linearGradient>
+    <!-- Тень -->
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Закруглённый фон -->
+  <rect width="512" height="512" rx="110" fill="url(#bgGrad)"/>
+
+  <!-- Тираннозавр (чёрный, основной) -->
+  <g filter="url(#shadow)">
+    <!-- Хвост -->
+    <path d="M320 360 L450 420 L420 380 L460 370 L410 340 L430 310 L370 340 Z" fill="#1A1A1A" stroke="#000" stroke-width="2"/>
+    
+    <!-- Тело -->
+    <ellipse cx="280" cy="330" rx="90" ry="70" fill="#1A1A1A"/>
+    
+    <!-- Задняя нога -->
+    <path d="M320 370 L340 440 L300 440 L310 380 Z" fill="#1A1A1A"/>
+    <ellipse cx="310" cy="445" rx="30" ry="12" fill="#1A1A1A"/>
+    
+    <!-- Передняя нога (левая, держит шаурму) -->
+    <path d="M220 340 L180 370 L200 390 L230 360 Z" fill="#1A1A1A"/>
+    
+    <!-- Шея -->
+    <path d="M230 290 Q200 240 210 190 L250 190 Q260 240 280 290 Z" fill="#1A1A1A"/>
+    
+    <!-- Голова -->
+    <ellipse cx="230" cy="180" rx="70" ry="55" fill="#1A1A1A"/>
+    
+    <!-- Верхняя челюсть -->
+    <path d="M170 170 Q130 160 100 180 L160 190 Z" fill="#1A1A1A"/>
+    
+    <!-- Нижняя челюсть -->
+    <path d="M170 200 Q140 220 110 210 L160 195 Z" fill="#1A1A1A"/>
+    
+    <!-- Зубы -->
+    <polygon points="140,182 145,195 150,182" fill="#FFFFFF"/>
+    <polygon points="125,185 128,198 133,184" fill="#FFFFFF"/>
+    <polygon points="155,180 160,192 165,179" fill="#FFFFFF"/>
+    
+    <!-- Глаз (круглый, агрессивный) -->
+    <circle cx="200" cy="165" r="16" fill="#FFFFFF"/>
+    <circle cx="205" cy="165" r="7" fill="#000"/>
+    
+    <!-- Солнцезащитные очки (крутой стиль) -->
+    <path d="M165 160 L245 160 L255 175 L235 180 L205 175 L175 180 L155 175 Z" fill="#000000" stroke="#333" stroke-width="3"/>
+    <path d="M165 160 Q155 150 145 155 L155 170 Z" fill="#000" stroke="#333" stroke-width="2"/>
+    <!-- Блик на очках -->
+    <line x1="180" y1="165" x2="195" y2="168" stroke="#FF9A00" stroke-width="3" stroke-linecap="round"/>
+    <line x1="215" y1="168" x2="230" y2="165" stroke="#FF9A00" stroke-width="3" stroke-linecap="round"/>
+    
+    <!-- Маленькая передняя лапа (правая) -->
+    <path d="M260 300 Q280 280 290 300" stroke="#1A1A1A" stroke-width="12" fill="none" stroke-linecap="round"/>
+    
+    <!-- Шаурма в левой лапе -->
+    <g transform="translate(160, 370) rotate(-20)">
+      <!-- Лаваш -->
+      <ellipse cx="0" cy="0" rx="35" ry="22" fill="url(#lavash)" stroke="#B8860B" stroke-width="2"/>
+      <!-- Мясо -->
+      <path d="M-15 -8 Q0 -15 15 -8" stroke="#8B4513" stroke-width="8" fill="none" stroke-linecap="round"/>
+      <path d="M-18 0 Q0 -8 18 0" stroke="#A0522D" stroke-width="7" fill="none" stroke-linecap="round"/>
+      <!-- Соус -->
+      <path d="M-10 8 Q0 15 10 8" stroke="#FFD700" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <!-- Бумага снизу -->
+      <path d="M-25 12 L-20 30 L0 28 L20 30 L25 12 Z" fill="#E0E0E0" stroke="#999" stroke-width="1"/>
+    </g>
+    
+    <!-- Когти на ногах -->
+    <path d="M285 440 L295 452 L290 440" fill="#FFFFFF"/>
+    <path d="M305 442 L315 454 L310 442" fill="#FFFFFF"/>
+    <path d="M325 440 L335 452 L330 440" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Эффект "безумно круто" – молния и звёзды -->
+ <g opacity="0.9">
+    <!-- Молния справа -->
+    <polygon points="420,120 445,175 425,180 455,235 485,180 465,175 490,120" fill="#FFD700" stroke="#FFA500" stroke-width="3"/>
+    
+    <!-- Звёздочки-брызги -->
+    <path d="M380 80 L385 90 L395 92 L387 100 L389 110 L380 105 L371 110 L373 100 L365 92 L375 90 Z" fill="#FFD700"/>
+    <path d="M460 280 L463 286 L470 288 L465 293 L467 300 L460 296 L453 300 L455 293 L450 288 L457 286 Z" fill="#FFD700"/>
+    <path d="M130 300 L133 306 L140 308 L135 313 L137 320 L130 316 L123 320 L125 313 L120 308 L127 306 Z" fill="#FFD700"/>
+  </g>
+
+  <!-- Пламенная полоса внизу (динамика) -->
+  <path d="M50 470 Q150 440 256 470 Q362 500 462 470" stroke="#FF4500" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.7"/>
+  
+  <!-- Тень под иконкой (глобальная) -->
+  <ellipse cx="256" cy="490" rx="140" ry="10" fill="rgba(0,0,0,0.25)"/>
+</svg>
