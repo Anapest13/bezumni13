@@ -63,7 +63,7 @@ async function initDb() {
 
     // Migration: Add email column if it doesn't exist (for existing databases)
     try {
-      const [columns]: any = await connection.query('SHOW COLUMNS FROM users LIKE "email"');
+      const [columns]: any = await connection.query("SHOW COLUMNS FROM users LIKE 'email'");
       if (columns.length === 0) {
         console.log('Adding email column to users table...');
         await connection.query('ALTER TABLE users ADD COLUMN email VARCHAR(255) UNIQUE NOT NULL AFTER phone');
@@ -114,6 +114,7 @@ async function initDb() {
         total_amount DECIMAL(10, 2) NOT NULL,
         discount_amount DECIMAL(10, 2) DEFAULT 0,
         bonuses_used DECIMAL(10, 2) DEFAULT 0,
+        promo_code VARCHAR(50),
         status ENUM('pending', 'preparing', 'ready', 'delivered', 'cancelled') DEFAULT 'pending',
         estimated_time INT DEFAULT 20,
         review TEXT,
@@ -122,6 +123,17 @@ async function initDb() {
         FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `);
+
+    // Migration: ensure columns exist for existing tables
+    try {
+      const [columns]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'promo_code'");
+      if (columns.length === 0) {
+        console.log('Adding promo_code column to orders table...');
+        await connection.query('ALTER TABLE orders ADD COLUMN promo_code VARCHAR(50) AFTER bonuses_used');
+      }
+    } catch (err) {
+      console.warn('Migration for orders failed or column already exists');
+    }
 
     // 7. News/Carousel
     await connection.query(`
@@ -172,21 +184,189 @@ async function initDb() {
       )
     `);
 
-    // Migration: Add min_order_amount column if it doesn't exist
+    // 7. Cities
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS cities (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL UNIQUE
+      )
+    `);
+
+    // 8. Branches
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS branches (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        city_id INT,
+        name VARCHAR(255) NOT NULL,
+        address VARCHAR(255) NOT NULL,
+        is_24_7 BOOLEAN DEFAULT TRUE,
+        latitude DECIMAL(10, 8) NOT NULL DEFAULT 56.0153,
+        longitude DECIMAL(11, 8) NOT NULL DEFAULT 92.8932,
+        FOREIGN KEY (city_id) REFERENCES cities(id) ON DELETE SET NULL
+      )
+    `);
+
+    // 9. Branch Variant Stock
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS branch_variant_stock (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        branch_id INT NOT NULL,
+        variant_id INT NOT NULL,
+        stock INT NOT NULL DEFAULT 100,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (variant_id) REFERENCES product_variants(id) ON DELETE CASCADE,
+        UNIQUE KEY unique_branch_variant (branch_id, variant_id)
+      )
+    `);
+
+    // Migration: ensure columns exist for existing tables
+    // Promo Codes Migrations
     try {
-      const [columns]: any = await connection.query('SHOW COLUMNS FROM promo_codes LIKE "min_order_amount"');
-      if (columns.length === 0) {
-        console.log('Adding min_order_amount column to promo_codes table...');
+      const [pcUsageCol]: any = await connection.query("SHOW COLUMNS FROM promo_codes LIKE 'usage_limit'");
+      if (pcUsageCol.length === 0) {
+        console.log('Adding usage columns to promo_codes...');
+        await connection.query('ALTER TABLE promo_codes ADD COLUMN usage_limit INT DEFAULT NULL, ADD COLUMN used_count INT DEFAULT 0 AFTER min_order_amount');
+      }
+    } catch (e) {
+      console.warn('Promo codes usage migration error/already exists:', e);
+    }
+    
+    try {
+      const [pcActiveCol]: any = await connection.query("SHOW COLUMNS FROM promo_codes LIKE 'is_active'");
+      if (pcActiveCol.length === 0) {
+        console.log('Adding is_active column to promo_codes...');
+        await connection.query('ALTER TABLE promo_codes ADD COLUMN is_active BOOLEAN DEFAULT TRUE');
+      }
+    } catch (e) {
+      console.warn('Promo codes is_active migration error/already exists:', e);
+    }
+
+    try {
+      const [pcMinCol]: any = await connection.query("SHOW COLUMNS FROM promo_codes LIKE 'min_order_amount'");
+      if (pcMinCol.length === 0) {
+        console.log('Adding min_order_amount column to promo_codes...');
         await connection.query('ALTER TABLE promo_codes ADD COLUMN min_order_amount DECIMAL(10, 2) DEFAULT 0 AFTER discount_percent');
       }
-      
-      const [limitCol]: any = await connection.query('SHOW COLUMNS FROM promo_codes LIKE "usage_limit"');
-      if (limitCol.length === 0) {
-        console.log('Adding usage columns to promo_codes...');
-        await connection.query('ALTER TABLE promo_codes ADD COLUMN usage_limit INT DEFAULT NULL, ADD COLUMN used_count INT DEFAULT 0');
+    } catch (e) {
+      console.warn('Promo codes min_order_amount migration error/already exists:', e);
+    }
+
+    // Orders Migrations
+    try {
+      const [orderPromoCol]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'promo_code'");
+      if (orderPromoCol.length === 0) {
+        console.log('Adding promo_code column to orders table...');
+        await connection.query('ALTER TABLE orders ADD COLUMN promo_code VARCHAR(50) AFTER bonuses_used');
       }
-    } catch (err) {
-      console.warn('Migration for promo_codes failed or column already exists');
+    } catch (e) {
+      console.warn('Orders promo_code migration error/already exists:', e);
+    }
+
+    try {
+      const [orderEstCol]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'estimated_time'");
+      if (orderEstCol.length === 0) {
+        console.log('Adding estimated_time column to orders table...');
+        await connection.query('ALTER TABLE orders ADD COLUMN estimated_time INT DEFAULT 20 AFTER status');
+      }
+    } catch (e) {
+      console.warn('Orders estimated_time migration error/already exists:', e);
+    }
+
+    try {
+      const [orderBranchCol]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'branch_id'");
+      if (orderBranchCol.length === 0) {
+        console.log('Adding branch_id column to orders table...');
+        await connection.query('ALTER TABLE orders ADD COLUMN branch_id INT AFTER user_id');
+        await connection.query('ALTER TABLE orders ADD CONSTRAINT fk_orders_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL');
+      }
+    } catch (e) {
+      console.warn('Orders branch_id migration error/already exists:', e);
+    }
+
+    // Branches City ID Migration
+    try {
+      const [branchCityCol]: any = await connection.query("SHOW COLUMNS FROM branches LIKE 'city_id'");
+      if (branchCityCol.length === 0) {
+        console.log('Adding city_id column to branches table...');
+        await connection.query('ALTER TABLE branches ADD COLUMN city_id INT AFTER id');
+        await connection.query('ALTER TABLE branches ADD CONSTRAINT fk_branches_city FOREIGN KEY (city_id) REFERENCES cities(id) ON DELETE SET NULL');
+      }
+    } catch (e) {
+      console.warn('Branches city_id migration error/already exists:', e);
+    }
+
+    // News/Promo branch_id Migrations
+    try {
+      const [newsBranchCol]: any = await connection.query("SHOW COLUMNS FROM news LIKE 'branch_id'");
+      if (newsBranchCol.length === 0) {
+        console.log('Adding branch_id column to news table...');
+        await connection.query('ALTER TABLE news ADD COLUMN branch_id INT AFTER image_url');
+        await connection.query('ALTER TABLE news ADD CONSTRAINT fk_news_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE');
+      }
+    } catch (e) {
+      console.warn('News branch_id migration error/already exists:', e);
+    }
+
+    try {
+      const [promoBranchCol]: any = await connection.query("SHOW COLUMNS FROM promo_codes LIKE 'branch_id'");
+      if (promoBranchCol.length === 0) {
+        console.log('Adding branch_id column to promo_codes table...');
+        await connection.query('ALTER TABLE promo_codes ADD COLUMN branch_id INT AFTER min_order_amount');
+        await connection.query('ALTER TABLE promo_codes ADD CONSTRAINT fk_promo_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE');
+      }
+    } catch (e) {
+      console.warn('Promo codes branch_id migration error/already exists:', e);
+    }
+
+    // Seed cities and branches
+    try {
+      // Seed cities
+      const [cityCount]: any = await connection.query('SELECT COUNT(*) as count FROM cities');
+      if (cityCount[0].count === 0) {
+        console.log('Seeding initial cities...');
+        await connection.query("INSERT INTO cities (name) VALUES ('Красноярск')");
+      }
+
+      // Always get Krasnoyarsk ID
+      const [krasnoyarskIdRow]: any = await connection.query("SELECT id FROM cities WHERE name = 'Красноярск' LIMIT 1");
+      const kCityId = krasnoyarskIdRow[0]?.id;
+
+      // Seed branches
+      const [branchCount]: any = await connection.query('SELECT COUNT(*) as count FROM branches');
+      if (branchCount[0].count === 0 && kCityId) {
+        console.log('Seeding initial branches...');
+        await connection.query(`
+          INSERT INTO branches (city_id, name, address, is_24_7, latitude, longitude) VALUES 
+          (?, 'Филиал Центр', 'пр. Мира, 85', TRUE, 56.012356, 92.868512),
+          (?, 'Филиал Взлетка', 'ул. Весны, 16', FALSE, 56.038541, 92.915234),
+          (?, 'Филиал Свободный', 'пр. Свободный, 48', TRUE, 56.021423, 92.798541),
+          (?, 'Филиал на Красноярском Рабочем', 'проспект имени газеты Красноярский Рабочий, 127', TRUE, 55.9928, 92.9510)
+        `, [kCityId, kCityId, kCityId, kCityId]);
+      } else if (kCityId) {
+        // Assign Krasnoyarsk to existing branches with NULL city_id
+        await connection.query('UPDATE branches SET city_id = ? WHERE city_id IS NULL', [kCityId]);
+
+        // Check if Krasnoyarsky Rabochiy branch exists, if not seed it!
+        const [krasRabBranch]: any = await connection.query("SELECT id FROM branches WHERE address LIKE '%Красноярский Рабочий, 127%' LIMIT 1");
+        if (krasRabBranch.length === 0) {
+          console.log('Seeding Krasnoyarsky Rabochiy branch...');
+          await connection.query(`
+            INSERT INTO branches (city_id, name, address, is_24_7, latitude, longitude) VALUES 
+            (?, 'Филиал на Красноярском Рабочем', 'проспект имени газеты Красноярский Рабочий, 127', TRUE, 55.9928, 92.9510)
+          `, [kCityId]);
+        }
+      }
+
+      // Initialize stock for all combinations
+      await connection.query(`
+        INSERT IGNORE INTO branch_variant_stock (branch_id, variant_id, stock)
+        SELECT b.id, pv.id, IF(p.category_id = (SELECT id FROM categories WHERE name = 'Напитки' LIMIT 1), 15, 100)
+        FROM branches b
+        CROSS JOIN product_variants pv
+        JOIN products p ON pv.product_id = p.id
+      `);
+    } catch (e) {
+      console.warn('Seeding/stocks migration error:', e);
     }
 
     // SEEDING DATA FROM THE IMAGE
@@ -349,15 +529,51 @@ app.post('/api/orders/:id/review', async (req, res) => {
   }
 });
 
+app.delete('/api/orders/:id', async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query('DELETE FROM order_items WHERE order_id = ?', [req.params.id]);
+    await connection.query('DELETE FROM orders WHERE id = ?', [req.params.id]);
+    await connection.commit();
+    res.json({ success: true });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Failed to delete order:', err);
+    res.status(500).json({ error: 'Failed to delete order' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.delete('/api/orders/:id/review', async (req, res) => {
+  try {
+    await pool.query('UPDATE orders SET rating = NULL, review = NULL WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete review:', err);
+    res.status(500).json({ error: 'Failed to delete review' });
+  }
+});
+
 app.get('/api/news', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM news ORDER BY created_at DESC LIMIT 5');
+    const { branch_id } = req.query;
+    let queryStr = 'SELECT * FROM news';
+    const params: any[] = [];
+    if (branch_id && branch_id !== 'all') {
+      queryStr += ' WHERE branch_id IS NULL OR branch_id = ?';
+      params.push(parseInt(branch_id as string));
+    }
+    queryStr += ' ORDER BY created_at DESC LIMIT 5';
+    
+    const [rows] = await pool.query(queryStr, params);
     if ((rows as any[]).length === 0) {
       // Mock news if none in DB
       return res.json([
-        { id: 1, title: 'Скидка 15% на всё!', content: 'Используй промокод COOL при заказе!', image_url: 'https://picsum.photos/seed/promo1/800/400', type: 'promo' },
-        { id: 2, title: 'Новинка: Гавайская!', content: 'Попробуй нашу новую шаурму с ананасом!', image_url: 'https://picsum.photos/seed/promo2/800/400', type: 'news' },
-        { id: 3, title: 'Бонусы за каждый заказ', content: 'Копи 3% бонусами и оплачивай ими до 100% покупки!', image_url: 'https://picsum.photos/seed/promo3/800/400', type: 'news' }
+        { id: 1, title: 'Скидка 15% на всё!', content: 'Используй промокод COOL при заказе!', image_url: 'https://picsum.photos/seed/promo1/800/400', type: 'promo', branch_id: null },
+        { id: 2, title: 'Новинка: Гавайская!', content: 'Попробуй нашу новую шаурму с ананасом!', image_url: 'https://picsum.photos/seed/promo2/800/400', type: 'news', branch_id: null },
+        { id: 3, title: 'Бонусы за каждый заказ', content: 'Копи 3% бонусами и оплачивай ими до 100% покупки!', image_url: 'https://picsum.photos/seed/promo3/800/400', type: 'news', branch_id: null }
       ]);
     }
     res.json(rows);
@@ -369,11 +585,15 @@ app.get('/api/news', async (req, res) => {
 // Promo Codes
 app.get('/api/promo/:code', async (req, res) => {
   try {
-    const [rows]: any = await pool.query(
-      'SELECT * FROM promo_codes WHERE code = ? AND is_active = TRUE AND (usage_limit IS NULL OR used_count < usage_limit)',
-      [req.params.code]
-    );
-    if (rows.length === 0) return res.status(404).json({ error: 'Промокод недействителен или исчерпан' });
+    const { branch_id } = req.query;
+    let queryStr = 'SELECT * FROM promo_codes WHERE code = ? AND is_active = TRUE AND (usage_limit IS NULL OR used_count < usage_limit)';
+    const params: any[] = [req.params.code];
+    if (branch_id && branch_id !== 'all') {
+      queryStr += ' AND (branch_id IS NULL OR branch_id = ?)';
+      params.push(parseInt(branch_id as string));
+    }
+    const [rows]: any = await pool.query(queryStr, params);
+    if (rows.length === 0) return res.status(404).json({ error: 'Промокод недействителен, исчерпан или не предназначен для этого филиала' });
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to check promo code' });
@@ -383,6 +603,7 @@ app.get('/api/promo/:code', async (req, res) => {
 app.get('/api/menu', async (req, res) => {
   if (!process.env.DB_HOST) return res.json([]);
   try {
+    const { branch_id } = req.query;
     const [products]: any = await pool.query(`
       SELECT p.*, c.name as category_name 
       FROM products p 
@@ -390,11 +611,23 @@ app.get('/api/menu', async (req, res) => {
       WHERE p.is_available = TRUE
     `);
     
-    const [variants]: any = await pool.query('SELECT * FROM product_variants');
+    let variants: any;
+    if (branch_id) {
+      [variants] = await pool.query(`
+        SELECT pv.*, COALESCE(bvs.stock, 0) as stock
+        FROM product_variants pv
+        LEFT JOIN branch_variant_stock bvs ON pv.id = bvs.variant_id AND bvs.branch_id = ?
+      `, [branch_id]);
+    } else {
+      [variants] = await pool.query('SELECT *, 999 as stock FROM product_variants');
+    }
     
     const menu = products.map((p: any) => ({
       ...p,
-      variants: variants.filter((v: any) => v.product_id === p.id)
+      variants: variants.filter((v: any) => v.product_id === p.id).map((v: any) => ({
+        ...v,
+        stock: v.stock !== undefined ? parseInt(v.stock) : 999
+      }))
     }));
     
     res.json(menu);
@@ -405,6 +638,7 @@ app.get('/api/menu', async (req, res) => {
 
 app.get('/api/products/popular', async (req, res) => {
   try {
+    const { branch_id } = req.query;
     const [products]: any = await pool.query(`
       SELECT p.*, c.name as category_name, SUM(oi.quantity) as sales_count
       FROM products p
@@ -418,11 +652,23 @@ app.get('/api/products/popular', async (req, res) => {
       LIMIT 3
     `);
     
-    const [variants]: any = await pool.query('SELECT * FROM product_variants');
+    let variants: any;
+    if (branch_id) {
+      [variants] = await pool.query(`
+        SELECT pv.*, COALESCE(bvs.stock, 0) as stock
+        FROM product_variants pv
+        LEFT JOIN branch_variant_stock bvs ON pv.id = bvs.variant_id AND bvs.branch_id = ?
+      `, [branch_id]);
+    } else {
+      [variants] = await pool.query('SELECT *, 999 as stock FROM product_variants');
+    }
     
     const popular = products.map((p: any) => ({
       ...p,
-      variants: variants.filter((v: any) => v.product_id === p.id)
+      variants: variants.filter((v: any) => v.product_id === p.id).map((v: any) => ({
+        ...v,
+        stock: v.stock !== undefined ? parseInt(v.stock) : 999
+      }))
     }));
     
     res.json(popular);
@@ -434,19 +680,19 @@ app.get('/api/products/popular', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   if (!process.env.DB_HOST) return res.status(503).json({ error: 'Database not configured' });
-  const { user_id, customer_name, customer_phone, items, total_amount, discount_amount, bonuses_used, promo_code } = req.body;
+  const { branch_id, user_id, customer_name, customer_phone, items, total_amount, discount_amount, bonuses_used, promo_code } = req.body;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
     
     // 1. Create Order
     const [orderResult]: any = await connection.query(
-      'INSERT INTO orders (user_id, customer_name, customer_phone, total_amount, discount_amount, bonuses_used) VALUES (?, ?, ?, ?, ?, ?)',
-      [user_id || null, customer_name, customer_phone, total_amount, discount_amount || 0, bonuses_used || 0]
+      'INSERT INTO orders (user_id, branch_id, customer_name, customer_phone, total_amount, discount_amount, bonuses_used, promo_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [user_id || null, branch_id || null, customer_name, customer_phone, total_amount, discount_amount || 0, bonuses_used || 0, promo_code || null]
     );
     const orderId = orderResult.insertId;
-
-    // 2. Create Order Items
+ 
+    // 2. Create Order Items and update branch stock
     for (const item of items) {
       const customization = JSON.stringify({
         removed: item.removed_ingredients || [],
@@ -456,8 +702,16 @@ app.post('/api/orders', async (req, res) => {
         'INSERT INTO order_items (order_id, variant_id, quantity, price, customization) VALUES (?, ?, ?, ?, ?)',
         [orderId, item.variant_id, item.quantity, item.price, customization]
       );
-    }
 
+      // Decrement stock for the branch
+      if (branch_id) {
+        await connection.query(
+          'UPDATE branch_variant_stock SET stock = GREATEST(0, stock - ?) WHERE branch_id = ? AND variant_id = ?',
+          [item.quantity, branch_id, item.variant_id]
+        );
+      }
+    }
+ 
     // 3. Update User Bonuses (Loyalty: 3% back, subtract used)
     if (user_id) {
       const bonusEarned = total_amount * 0.03;
@@ -466,12 +720,12 @@ app.post('/api/orders', async (req, res) => {
         [bonuses_used || 0, bonusEarned, user_id]
       );
     }
-
+ 
     // 4. Increment Promo Usage
     if (promo_code) {
       await connection.query('UPDATE promo_codes SET used_count = used_count + 1 WHERE code = ?', [promo_code]);
     }
-
+ 
     await connection.commit();
     res.status(201).json({ id: orderId, status: 'pending' });
   } catch (err) {
@@ -494,11 +748,11 @@ app.get('/api/admin/promo', async (req, res) => {
 });
 
 app.post('/api/admin/promo', async (req, res) => {
-  const { code, discount_percent, min_order_amount, usage_limit } = req.body;
+  const { code, discount_percent, min_order_amount, usage_limit, branch_id } = req.body;
   try {
     await pool.query(
-      'INSERT INTO promo_codes (code, discount_percent, min_order_amount, usage_limit) VALUES (?, ?, ?, ?)',
-      [code, discount_percent, min_order_amount, usage_limit || null]
+      'INSERT INTO promo_codes (code, discount_percent, min_order_amount, usage_limit, branch_id) VALUES (?, ?, ?, ?, ?)',
+      [code, discount_percent, min_order_amount, usage_limit || null, branch_id || null]
     );
     res.status(201).json({ success: true });
   } catch (err: any) {
@@ -511,11 +765,11 @@ app.post('/api/admin/promo', async (req, res) => {
 });
 
 app.patch('/api/admin/promo/:id', async (req, res) => {
-  const { code, discount_percent, min_order_amount, usage_limit, is_active } = req.body;
+  const { code, discount_percent, min_order_amount, usage_limit, is_active, branch_id } = req.body;
   try {
     await pool.query(
-      'UPDATE promo_codes SET code = ?, discount_percent = ?, min_order_amount = ?, usage_limit = ?, is_active = ? WHERE id = ?',
-      [code, discount_percent, min_order_amount, usage_limit || null, is_active, req.params.id]
+      'UPDATE promo_codes SET code = ?, discount_percent = ?, min_order_amount = ?, usage_limit = ?, is_active = ?, branch_id = ? WHERE id = ?',
+      [code, discount_percent, min_order_amount, usage_limit || null, is_active, branch_id || null, req.params.id]
     );
     res.json({ success: true });
   } catch (err) {
@@ -534,7 +788,8 @@ app.delete('/api/admin/promo/:id', async (req, res) => {
 
 app.get('/api/admin/stats/reviews', async (req, res) => {
   try {
-    const statsQuery = `
+    const { branch_id } = req.query;
+    let statsQuery = `
       SELECT 
         AVG(CASE WHEN created_at >= CURDATE() THEN rating END) as avg_day,
         AVG(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) THEN rating END) as avg_week,
@@ -543,7 +798,12 @@ app.get('/api/admin/stats/reviews', async (req, res) => {
       FROM orders 
       WHERE rating IS NOT NULL
     `;
-    const [rows]: any = await pool.query(statsQuery);
+    const params: any[] = [];
+    if (branch_id && branch_id !== 'all') {
+      statsQuery += ' AND branch_id = ?';
+      params.push(parseInt(branch_id as string));
+    }
+    const [rows]: any = await pool.query(statsQuery, params);
     res.json(rows[0]);
   } catch (err) {
     console.error('Stats error:', err);
@@ -656,11 +916,11 @@ app.patch('/api/admin/orders/:id', async (req, res) => {
 
 // News Management
 app.post('/api/admin/news', async (req, res) => {
-  const { title, content, image_url, type } = req.body;
+  const { title, content, image_url, type, branch_id } = req.body;
   try {
     await pool.query(
-      'INSERT INTO news (title, content, image_url, type) VALUES (?, ?, ?, ?)',
-      [title, content, image_url, type || 'news']
+      'INSERT INTO news (title, content, image_url, type, branch_id) VALUES (?, ?, ?, ?, ?)',
+      [title, content, image_url, type || 'news', branch_id || null]
     );
     res.status(201).json({ success: true });
   } catch (err) {
@@ -669,11 +929,11 @@ app.post('/api/admin/news', async (req, res) => {
 });
 
 app.patch('/api/admin/news/:id', async (req, res) => {
-  const { title, content, image_url, type } = req.body;
+  const { title, content, image_url, type, branch_id } = req.body;
   try {
     await pool.query(
-      'UPDATE news SET title = ?, content = ?, image_url = ?, type = ? WHERE id = ?',
-      [title, content, image_url, type, req.params.id]
+      'UPDATE news SET title = ?, content = ?, image_url = ?, type = ?, branch_id = ? WHERE id = ?',
+      [title, content, image_url, type, branch_id || null, req.params.id]
     );
     res.json({ success: true });
   } catch (err) {
@@ -687,6 +947,132 @@ app.delete('/api/admin/news/:id', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete news' });
+  }
+});
+
+// Cities API
+app.get('/api/cities', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM cities ORDER BY name ASC');
+    res.json(rows);
+  } catch (err) {
+    console.error('Failed to fetch cities:', err);
+    res.status(500).json({ error: 'Failed to fetch cities' });
+  }
+});
+
+app.post('/api/admin/cities', async (req, res) => {
+  const { name } = req.body;
+  try {
+    const [result]: any = await pool.query('INSERT INTO cities (name) VALUES (?)', [name]);
+    res.status(201).json({ success: true, id: result.insertId });
+  } catch (err) {
+    console.error('Failed to create city:', err);
+    res.status(500).json({ error: 'Failed to create city' });
+  }
+});
+
+// Branches and Stock APIs
+app.get('/api/branches', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT b.*, c.name as city_name 
+      FROM branches b
+      LEFT JOIN cities c ON b.city_id = c.id
+      ORDER BY b.id ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('Failed to fetch branches:', err);
+    res.status(500).json({ error: 'Failed to fetch branches' });
+  }
+});
+
+app.post('/api/admin/branches', async (req, res) => {
+  const { name, address, is_24_7, latitude, longitude, city_id } = req.body;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    
+    const [result]: any = await connection.query(
+      'INSERT INTO branches (city_id, name, address, is_24_7, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?)',
+      [city_id || null, name, address, is_24_7 !== undefined ? is_24_7 : true, latitude || 56.0153, longitude || 92.8932]
+    );
+    const branchId = result.insertId;
+
+    // Auto seed stock for all product variants for this new branch!
+    await connection.query(`
+      INSERT IGNORE INTO branch_variant_stock (branch_id, variant_id, stock)
+      SELECT ?, pv.id, IF(p.category_id = (SELECT id FROM categories WHERE name = 'Напитки' LIMIT 1), 15, 100)
+      FROM product_variants pv
+      JOIN products p ON pv.product_id = p.id
+    `, [branchId]);
+
+    await connection.commit();
+    res.status(201).json({ success: true, id: branchId });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Failed to create branch:', err);
+    res.status(500).json({ error: 'Failed to create branch' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.patch('/api/admin/branches/:id', async (req, res) => {
+  const { name, address, is_24_7, latitude, longitude, city_id } = req.body;
+  try {
+    await pool.query(
+      'UPDATE branches SET city_id = ?, name = ?, address = ?, is_24_7 = ?, latitude = ?, longitude = ? WHERE id = ?',
+      [city_id || null, name, address, is_24_7 !== undefined ? is_24_7 : true, latitude, longitude, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to update branch:', err);
+    res.status(500).json({ error: 'Failed to update branch' });
+  }
+});
+
+app.delete('/api/admin/branches/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM branches WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete branch:', err);
+    res.status(500).json({ error: 'Failed to delete branch' });
+  }
+});
+
+app.get('/api/admin/stock', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT bvs.*, b.name as branch_name, p.name as product_name, p.image_url, pv.size_label, pv.price, c.name as category_name
+      FROM branch_variant_stock bvs
+      JOIN branches b ON bvs.branch_id = b.id
+      JOIN product_variants pv ON bvs.variant_id = pv.id
+      JOIN products p ON pv.product_id = p.id
+      JOIN categories c ON p.category_id = c.id
+      ORDER BY b.id, c.name, p.name, pv.id
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error('Failed to fetch stock:', err);
+    res.status(500).json({ error: 'Failed to fetch stock' });
+  }
+});
+
+app.post('/api/admin/stock', async (req, res) => {
+  const { branch_id, variant_id, stock } = req.body;
+  try {
+    await pool.query(`
+      INSERT INTO branch_variant_stock (branch_id, variant_id, stock)
+      VALUES (?, ?, ?)
+      ON DUPLICATE KEY UPDATE stock = VALUES(stock)
+    `, [branch_id, variant_id, stock]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to update stock:', err);
+    res.status(500).json({ error: 'Failed to update stock' });
   }
 });
 

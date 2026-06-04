@@ -8,6 +8,7 @@ export interface ProductVariant {
   product_id: number;
   size_label: string;
   price: number;
+  stock?: number; // Real-time per-branch quantity limit
 }
 
 export interface MenuItem {
@@ -38,6 +39,7 @@ export interface PromoCode {
   usage_limit: number | null;
   used_count: number;
   is_active: boolean;
+  branch_id?: number | null;
 }
 
 export interface Order {
@@ -53,6 +55,7 @@ export interface Order {
   review?: string;
   rating?: number;
   created_at: string;
+  branch_id?: number | null;
 }
 
 export interface NewsItem {
@@ -62,6 +65,7 @@ export interface NewsItem {
   image_url: string;
   type: 'promo' | 'news';
   created_at: string;
+  branch_id?: number | null;
 }
 
 export interface CartItem {
@@ -76,3 +80,27 @@ export interface CartItem {
   removed_ingredients: string[];
   added_extras: { id: number; name: string; price: number }[];
 }
+
+export interface City {
+  id: number;
+  name: string;
+}
+
+export interface Branch {
+  id: number;
+  city_id?: number;
+  city_name?: string;
+  name: string;
+  address: string;
+  is_24_7: boolean;
+  latitude: number;
+  longitude: number;
+}
+
+export interface BranchVariantStock {
+  id: number;
+  branch_id: number;
+  variant_id: number;
+  stock: number;
+}
+

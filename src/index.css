@@ -11,3 +11,66 @@
     @apply bg-[#0a0a0a] text-white;
   }
 }
+
+/* Custom premium dark theme styling for 2GIS/Leaflet Map */
+#dg-map {
+  background: #0d0d0e !important;
+}
+
+#dg-map .dg-map-container,
+#dg-map .leaflet-container {
+  background-color: #0d0d0e !important;
+}
+
+/* Dark mode conversion for map tiles only (holds active controls & markers intact) */
+#dg-map .leaflet-tile-pane img,
+#dg-map .dg-tile-pane img,
+#dg-map .leaflet-tile,
+#dg-map .dg-tile,
+#dg-map img.leaflet-tile,
+#dg-map img.dg-tile,
+#dg-map .leaflet-layer img {
+  filter: invert(95%) hue-rotate(180deg) brightness(85%) contrast(110%) !important;
+}
+
+/* Customize Popups to match Shawarma premium dark theme */
+.leaflet-popup-content-wrapper,
+.dg-popup-content-wrapper,
+.dg-popup-content-wrapper .dg-popup-content,
+.leaflet-popup-content-wrapper .leaflet-popup-content {
+  background: #18181b !important;
+  color: #ffffff !important;
+  border-radius: 24px !important;
+}
+
+.leaflet-popup-content-wrapper,
+.dg-popup-content-wrapper {
+  background: #18181b !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 10px 10px -5px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-popup-tip,
+.dg-popup-tip {
+  background: #18181b !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.leaflet-popup-close-button,
+.dg-popup-close-button {
+  color: rgba(255, 255, 255, 0.4) !important;
+  font-weight: bold !important;
+  font-size: 14px !important;
+  top: 10px !important;
+  right: 10px !important;
+}
+
+.leaflet-popup-close-button:hover,
+.dg-popup-close-button:hover {
+  color: #f97316 !important;
+}
+
+.leaflet-popup-content,
+.dg-popup-content {
+  margin: 12px 14px !important;
+}
