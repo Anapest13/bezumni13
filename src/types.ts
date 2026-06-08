@@ -56,6 +56,8 @@ export interface Order {
   rating?: number;
   created_at: string;
   branch_id?: number | null;
+  payment_method?: 'cash' | 'yoomoney';
+  is_paid?: boolean | number;
 }
 
 export interface NewsItem {
@@ -84,6 +86,8 @@ export interface CartItem {
 export interface City {
   id: number;
   name: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface Branch {

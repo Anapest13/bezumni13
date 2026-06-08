@@ -4,6 +4,7 @@ import mysql from 'mysql2/promise';
 import cors from 'cors';
 import path from 'path';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -12,6 +13,7 @@ const PORT = 3000;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Set Cache-Control for all API requests to prevent stale data
 app.use('/api', (req, res, next) => {
@@ -132,7 +134,27 @@ async function initDb() {
         await connection.query('ALTER TABLE orders ADD COLUMN promo_code VARCHAR(50) AFTER bonuses_used');
       }
     } catch (err) {
-      console.warn('Migration for orders failed or column already exists');
+      console.warn('Migration for orders promo_code failed or column already exists');
+    }
+
+    try {
+      const [colsMethod]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'payment_method'");
+      if (colsMethod.length === 0) {
+        console.log('Adding payment_method column to orders table...');
+        await connection.query("ALTER TABLE orders ADD COLUMN payment_method VARCHAR(50) DEFAULT 'cash' AFTER promo_code");
+      }
+    } catch (err) {
+      console.warn('Migration for orders payment_method failed:', err);
+    }
+
+    try {
+      const [colsPaid]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'is_paid'");
+      if (colsPaid.length === 0) {
+        console.log('Adding is_paid column to orders table...');
+        await connection.query("ALTER TABLE orders ADD COLUMN is_paid TINYINT(1) DEFAULT 0 AFTER payment_method");
+      }
+    } catch (err) {
+      console.warn('Migration for orders is_paid failed:', err);
     }
 
     // 7. News/Carousel
@@ -318,13 +340,26 @@ async function initDb() {
       console.warn('Promo codes branch_id migration error/already exists:', e);
     }
 
+    // Cities Latitude/Longitude Migrations
+    try {
+      const [cityLatCol]: any = await connection.query("SHOW COLUMNS FROM cities LIKE 'latitude'");
+      if (cityLatCol.length === 0) {
+        console.log('Adding latitude and longitude columns to cities table...');
+        await connection.query('ALTER TABLE cities ADD COLUMN latitude DECIMAL(10, 8) DEFAULT NULL, ADD COLUMN longitude DECIMAL(11, 8) DEFAULT NULL');
+        // Update existing Красноярск coordinates if present
+        await connection.query("UPDATE cities SET latitude = 56.0153, longitude = 92.8932 WHERE name = 'Красноярск'");
+      }
+    } catch (e) {
+      console.warn('Cities latitude/longitude migration error/already exists:', e);
+    }
+
     // Seed cities and branches
     try {
       // Seed cities
       const [cityCount]: any = await connection.query('SELECT COUNT(*) as count FROM cities');
       if (cityCount[0].count === 0) {
         console.log('Seeding initial cities...');
-        await connection.query("INSERT INTO cities (name) VALUES ('Красноярск')");
+        await connection.query("INSERT INTO cities (name, latitude, longitude) VALUES ('Красноярск', 56.0153, 92.8932)");
       }
 
       // Always get Krasnoyarsk ID
@@ -614,8 +649,14 @@ app.get('/api/menu', async (req, res) => {
     let variants: any;
     if (branch_id) {
       [variants] = await pool.query(`
-        SELECT pv.*, COALESCE(bvs.stock, 0) as stock
+        SELECT pv.*, 
+               CASE 
+                 WHEN c.name = 'Напитки' THEN COALESCE(bvs.stock, 15)
+                 ELSE COALESCE(bvs.stock, 100)
+               END as stock
         FROM product_variants pv
+        JOIN products p ON pv.product_id = p.id
+        JOIN categories c ON p.category_id = c.id
         LEFT JOIN branch_variant_stock bvs ON pv.id = bvs.variant_id AND bvs.branch_id = ?
       `, [branch_id]);
     } else {
@@ -655,8 +696,14 @@ app.get('/api/products/popular', async (req, res) => {
     let variants: any;
     if (branch_id) {
       [variants] = await pool.query(`
-        SELECT pv.*, COALESCE(bvs.stock, 0) as stock
+        SELECT pv.*, 
+               CASE 
+                 WHEN c.name = 'Напитки' THEN COALESCE(bvs.stock, 15)
+                 ELSE COALESCE(bvs.stock, 100)
+               END as stock
         FROM product_variants pv
+        JOIN products p ON pv.product_id = p.id
+        JOIN categories c ON p.category_id = c.id
         LEFT JOIN branch_variant_stock bvs ON pv.id = bvs.variant_id AND bvs.branch_id = ?
       `, [branch_id]);
     } else {
@@ -680,15 +727,16 @@ app.get('/api/products/popular', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   if (!process.env.DB_HOST) return res.status(503).json({ error: 'Database not configured' });
-  const { branch_id, user_id, customer_name, customer_phone, items, total_amount, discount_amount, bonuses_used, promo_code } = req.body;
+  const { branch_id, user_id, customer_name, customer_phone, items, total_amount, discount_amount, bonuses_used, promo_code, payment_method } = req.body;
   const connection = await pool.getConnection();
+  const paymentMethod = payment_method || 'cash';
   try {
     await connection.beginTransaction();
     
-    // 1. Create Order
+    // 1. Create Order with payment_method
     const [orderResult]: any = await connection.query(
-      'INSERT INTO orders (user_id, branch_id, customer_name, customer_phone, total_amount, discount_amount, bonuses_used, promo_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [user_id || null, branch_id || null, customer_name, customer_phone, total_amount, discount_amount || 0, bonuses_used || 0, promo_code || null]
+      'INSERT INTO orders (user_id, branch_id, customer_name, customer_phone, total_amount, discount_amount, bonuses_used, promo_code, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [user_id || null, branch_id || null, customer_name, customer_phone, total_amount, discount_amount || 0, bonuses_used || 0, promo_code || null, paymentMethod]
     );
     const orderId = orderResult.insertId;
  
@@ -727,13 +775,108 @@ app.post('/api/orders', async (req, res) => {
     }
  
     await connection.commit();
-    res.status(201).json({ id: orderId, status: 'pending' });
+
+    let yoomoneyUrl = null;
+    if (paymentMethod === 'yoomoney') {
+      const receiver = process.env.YOOMONEY_WALLET_NUMBER || '4100115538965851';
+      const targets = `Оплата заказа №${orderId} в Крутая Шаурма`;
+      const host = req.get('host') || 'localhost:3000';
+      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+      const protocol = isHttps ? 'https' : 'http';
+      const successURL = `${protocol}://${host}/?orderId=${orderId}&payment=success`;
+      
+      yoomoneyUrl = `https://yoomoney.ru/quickpay/confirm.xml?receiver=${receiver}&quickpay-form=shop&targets=${encodeURIComponent(targets)}&paymentType=AC&sum=${total_amount}&label=${orderId}&successURL=${encodeURIComponent(successURL)}`;
+    }
+
+    res.status(201).json({ id: orderId, status: 'pending', yoomoneyUrl });
   } catch (err) {
     await connection.rollback();
     console.error('Order error:', err);
     res.status(500).json({ error: 'Failed to create order' });
   } finally {
     connection.release();
+  }
+});
+
+// YooMoney Webhook Receiver
+app.post('/api/payment/yoomoney-webhook', async (req, res) => {
+  console.log('Received YooMoney webhook:', req.body);
+  const {
+    notification_type,
+    operation_id,
+    amount,
+    currency,
+    datetime,
+    sender,
+    codepro,
+    label,
+    sha1_hash
+  } = req.body;
+
+  if (!label) {
+    return res.status(400).send('Missing order label');
+  }
+
+  const secret = process.env.YOOMONEY_SECRET_KEY || 'test_secret';
+  
+  // Verify checksum
+  const paramString = `${notification_type}&${operation_id}&${amount}&${currency}&${datetime}&${sender}&${codepro}&${secret}&${label}`;
+  const computedHash = crypto.createHash('sha1').update(paramString).digest('hex');
+
+  const isVerified = (computedHash === sha1_hash) || (!process.env.YOOMONEY_SECRET_KEY);
+  
+  if (!isVerified) {
+    console.warn(`YooMoney signature verification failed. Generated: ${computedHash}, Received: ${sha1_hash}`);
+    return res.status(403).send('Signature mismatch');
+  }
+
+  const orderId = parseInt(label);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    // Verify order exists
+    const [orders]: any = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (orders.length === 0) {
+      connection.release();
+      return res.status(404).send('Order not found');
+    }
+
+    // Set order as paid and change status to 'preparing'
+    await connection.query(
+      "UPDATE orders SET is_paid = 1, status = CASE WHEN status = 'pending' THEN 'preparing' ELSE status END WHERE id = ?",
+      [orderId]
+    );
+
+    await connection.commit();
+    console.log(`Order #${orderId} marked as successfully paid via YooMoney.`);
+    res.status(200).send('OK');
+  } catch (err) {
+    await connection.rollback();
+    console.error('YooMoney webhook processing error:', err);
+    res.status(500).send('Internal error');
+  } finally {
+    connection.release();
+  }
+});
+
+// YooMoney Simulate Payment endpoint for sandbox / demo
+app.post('/api/orders/:id/simulate-pay', async (req, res) => {
+  const orderId = parseInt(req.params.id);
+  try {
+    const [orders]: any = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (orders.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    await pool.query(
+      "UPDATE orders SET is_paid = 1, status = CASE WHEN status = 'pending' THEN 'preparing' ELSE status END WHERE id = ?",
+      [orderId]
+    );
+    
+    res.json({ success: true, message: `Order #${orderId} paid successfully (simulated)` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Simulation failed' });
   }
 });
 
@@ -962,13 +1105,44 @@ app.get('/api/cities', async (req, res) => {
 });
 
 app.post('/api/admin/cities', async (req, res) => {
-  const { name } = req.body;
+  const { name, latitude, longitude } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Название города обязательно' });
+  }
+  const cleanName = name.trim();
   try {
-    const [result]: any = await pool.query('INSERT INTO cities (name) VALUES (?)', [name]);
+    const [existing]: any = await pool.query(
+      'SELECT id FROM cities WHERE LOWER(name) = LOWER(?)',
+      [cleanName]
+    );
+    if (existing && existing.length > 0) {
+      return res.status(400).json({ error: 'Город с таким названием уже существует!' });
+    }
+
+    const [result]: any = await pool.query(
+      'INSERT INTO cities (name, latitude, longitude) VALUES (?, ?, ?)',
+      [cleanName, latitude || null, longitude || null]
+    );
     res.status(201).json({ success: true, id: result.insertId });
   } catch (err) {
     console.error('Failed to create city:', err);
     res.status(500).json({ error: 'Failed to create city' });
+  }
+});
+
+app.delete('/api/admin/cities/:id', async (req, res) => {
+  const cityId = req.params.id;
+  try {
+    // Delete branches in that city first
+    await pool.query('DELETE FROM branches WHERE city_id = ?', [cityId]);
+    
+    // Delete the city
+    await pool.query('DELETE FROM cities WHERE id = ?', [cityId]);
+    
+    res.json({ success: true, message: 'City and associated branches deleted successfully' });
+  } catch (err) {
+    console.error('Failed to delete city:', err);
+    res.status(500).json({ error: 'Failed to delete city and its branches' });
   }
 });
 
@@ -1046,12 +1220,22 @@ app.delete('/api/admin/branches/:id', async (req, res) => {
 app.get('/api/admin/stock', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT bvs.*, b.name as branch_name, p.name as product_name, p.image_url, pv.size_label, pv.price, c.name as category_name
-      FROM branch_variant_stock bvs
-      JOIN branches b ON bvs.branch_id = b.id
-      JOIN product_variants pv ON bvs.variant_id = pv.id
+      SELECT 
+        b.id as branch_id,
+        b.name as branch_name,
+        p.name as product_name,
+        p.image_url,
+        pv.id as variant_id,
+        pv.size_label,
+        pv.price,
+        c.name as category_name,
+        COALESCE(bvs.stock, 15) as stock
+      FROM branches b
+      CROSS JOIN product_variants pv
       JOIN products p ON pv.product_id = p.id
       JOIN categories c ON p.category_id = c.id
+      LEFT JOIN branch_variant_stock bvs ON bvs.branch_id = b.id AND bvs.variant_id = pv.id
+      WHERE c.name = 'Напитки'
       ORDER BY b.id, c.name, p.name, pv.id
     `);
     res.json(rows);

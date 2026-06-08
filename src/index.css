@@ -13,12 +13,14 @@
 }
 
 /* Custom premium dark theme styling for 2GIS/Leaflet Map */
-#dg-map {
+#dg-map, #admin-branch-map {
   background: #0d0d0e !important;
 }
 
 #dg-map .dg-map-container,
-#dg-map .leaflet-container {
+#dg-map .leaflet-container,
+#admin-branch-map .dg-map-container,
+#admin-branch-map .leaflet-container {
   background-color: #0d0d0e !important;
 }
 
@@ -29,7 +31,14 @@
 #dg-map .dg-tile,
 #dg-map img.leaflet-tile,
 #dg-map img.dg-tile,
-#dg-map .leaflet-layer img {
+#dg-map .leaflet-layer img,
+#admin-branch-map .leaflet-tile-pane img,
+#admin-branch-map .dg-tile-pane img,
+#admin-branch-map .leaflet-tile,
+#admin-branch-map .dg-tile,
+#admin-branch-map img.leaflet-tile,
+#admin-branch-map img.dg-tile,
+#admin-branch-map .leaflet-layer img {
   filter: invert(95%) hue-rotate(180deg) brightness(85%) contrast(110%) !important;
 }
 
