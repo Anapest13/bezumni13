@@ -783,7 +783,10 @@ app.post('/api/orders', async (req, res) => {
       const host = req.get('host') || 'localhost:3000';
       const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
       const protocol = isHttps ? 'https' : 'http';
-      const successURL = `${protocol}://${host}/?orderId=${orderId}&payment=success`;
+      const isLocalHost = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
+      const successURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
+        ? `${protocol}://${host}/?orderId=${orderId}&payment=success`
+        : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=success`;
       
       yoomoneyUrl = `https://yoomoney.ru/quickpay/confirm.xml?receiver=${receiver}&quickpay-form=shop&targets=${encodeURIComponent(targets)}&paymentType=AC&sum=${total_amount}&label=${orderId}&successURL=${encodeURIComponent(successURL)}`;
     }
@@ -856,6 +859,21 @@ app.post('/api/payment/yoomoney-webhook', async (req, res) => {
     res.status(500).send('Internal error');
   } finally {
     connection.release();
+  }
+});
+
+// Get Order Status endpoint
+app.get('/api/orders/:id/status', async (req, res) => {
+  const orderId = parseInt(req.params.id);
+  try {
+    const [orders]: any = await pool.query('SELECT is_paid, status FROM orders WHERE id = ?', [orderId]);
+    if (orders.length === 0) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    res.json(orders[0]);
+  } catch (err) {
+    console.error('Failed to fetch order status:', err);
+    res.status(500).json({ error: 'Failed to fetch order status' });
   }
 });
 

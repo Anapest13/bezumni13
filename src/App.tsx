@@ -454,6 +454,86 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get('orderId');
+    const payment = params.get('payment');
+    if (payment === 'success' && orderId) {
+      // Clean up URL immediately so re-renders don't re-trigger this
+      try {
+        const cleanUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
+        window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
+      } catch (e) {
+        console.error(e);
+      }
+
+      const numericOrderId = parseInt(orderId);
+
+      const confirmPaymentOnServer = async () => {
+        try {
+          const response = await fetch(`/api/orders/${numericOrderId}/simulate-pay`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          if (response.ok) {
+            addNotification(`Оплата заказа #${numericOrderId} успешно получена! 🎉`, 'success');
+            // Directly update state to avoid race with other fetchUserOrders calls
+            setUserOrders(prev => prev.map(o =>
+              o.id === numericOrderId
+                ? { ...o, is_paid: 1, status: o.status === 'pending' ? 'preparing' : o.status }
+                : o
+            ));
+            setActiveTab('profile');
+          } else {
+            addNotification('Статус оплаты проверяется...', 'info');
+          }
+          // Fetch fresh orders after a brief delay to ensure DB write is complete
+          setTimeout(() => {
+            fetchUserOrders();
+            // Check admin status from localStorage since user closure may be stale
+            try {
+              const savedUser = localStorage.getItem('user');
+              if (savedUser) {
+                const parsed = JSON.parse(savedUser);
+                if (parsed.role === 'admin') fetchOrders();
+              }
+            } catch (e) {}
+          }, 300);
+        } catch (error) {
+          console.error('Error confirming payment:', error);
+        }
+      };
+
+      confirmPaymentOnServer();
+    }
+  }, []); // Run once on mount — user is already initialized from localStorage synchronously
+
+  useEffect(() => {
+    if (!pendingYoomoneyPayment) return;
+
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/orders/${pendingYoomoneyPayment.orderId}/status?t=${Date.now()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.is_paid || data.status !== 'pending') {
+            addNotification(`Оплата заказа #${pendingYoomoneyPayment.orderId} успешно получена! 🎉`, 'success');
+            fetchUserOrders();
+            if (user && user.role === 'admin') {
+              fetchOrders();
+            }
+            setPendingYoomoneyPayment(null);
+            setActiveTab('profile');
+          }
+        }
+      } catch (err) {
+        console.error('Error polling order status:', err);
+      }
+    }, 2000); // Check status every 2 seconds
+
+    return () => clearInterval(intervalId);
+  }, [pendingYoomoneyPayment, user]);
+
+  useEffect(() => {
     fetchMenu(selectedBranch?.id);
     fetchNews(selectedBranch?.id);
     fetchPopularProducts(selectedBranch?.id);
@@ -518,10 +598,20 @@ export default function App() {
     }
   };
 
-  const fetchUserOrders = async () => {
-    if (!user) return;
+  const fetchUserOrders = async (forcedUserId?: number) => {
+    let activeUserId = forcedUserId || user?.id;
+    if (!activeUserId) {
+      try {
+        const saved = localStorage.getItem('user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          activeUserId = parsed.id;
+        }
+      } catch (e) {}
+    }
+    if (!activeUserId) return;
     try {
-      const res = await fetch(`/api/user/${user.id}/orders?t=${Date.now()}`);
+      const res = await fetch(`/api/user/${activeUserId}/orders?t=${Date.now()}`);
       if (res.ok) setUserOrders(await res.json());
     } catch (err) {
       console.error('Failed to fetch user orders');
@@ -1412,6 +1502,17 @@ export default function App() {
                             </span>
                           </div>
 
+                          {order.payment_method === 'yoomoney' && !order.is_paid && order.status !== 'cancelled' && (
+                            <div className="mt-2 bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-2xl text-[10px] space-y-1 font-sans leading-relaxed text-left">
+                              <p className="font-black uppercase tracking-widest text-[9px] text-red-500 flex items-center gap-1">
+                                ⚠️ Перевести не получится?
+                              </p>
+                              <p className="font-semibold text-white/80">
+                                Спросите у получателя (администратора филиала), как ещё можно отправить деньги.
+                              </p>
+                            </div>
+                          )}
+
                           <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
                             {order.payment_method === 'yoomoney' && !order.is_paid && order.status !== 'cancelled' && (
                               <button
@@ -1419,8 +1520,11 @@ export default function App() {
                                   const receiver = '4100115538965851';
                                   const targets = `Оплата заказа №${order.id} в Крутая Шаурма`;
                                   const host = window.location.host || 'localhost:3000';
+                                  const isLocal = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
                                   const protocol = window.location.protocol;
-                                  const successURL = `${protocol}//${host}/?orderId=${order.id}&payment=success`;
+                                  const successURL = (isLocal && !host.includes('bezumni13.onrender.com'))
+                                    ? `${protocol}//${host}/?orderId=${order.id}&payment=success`
+                                    : `https://bezumni13.onrender.com/?orderId=${order.id}&payment=success`;
                                   
                                   const url = `https://yoomoney.ru/quickpay/confirm.xml?receiver=${receiver}&quickpay-form=shop&targets=${encodeURIComponent(targets)}&paymentType=AC&sum=${order.total_amount}&label=${order.id}&successURL=${encodeURIComponent(successURL)}`;
                                   
@@ -2041,6 +2145,21 @@ export default function App() {
                   <p className="text-xs text-white/60 font-medium leading-relaxed font-sans">
                     Для завершения оформления оплатите заказ с помощью ЮМани (поддерживаются банковские карты). После успешной оплаты статус обновится автоматически.
                   </p>
+                  
+                  <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-2xl text-[11px] font-sans text-left space-y-2 leading-relaxed">
+                    <p className="font-black uppercase tracking-widest text-[9px] text-red-500 flex items-center gap-1">
+                      ⚠️ Перевести не получится?
+                    </p>
+                    <p className="font-semibold text-white/90">
+                      Спросите у получателя (администратора филиала), как ещё можно отправить деньги. Вы можете выполнить перевод напрямую или обсудить другой способ.
+                    </p>
+                    {selectedBranch && (
+                      <div className="pt-2 border-t border-red-500/10 text-[10px] space-y-0.5">
+                        <p className="text-white/40 font-black uppercase">Филиал:</p>
+                        <p className="text-white font-bold">{selectedBranch.name} ({selectedBranch.address})</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-2 pt-2">
@@ -2062,8 +2181,10 @@ export default function App() {
                         });
                         if (response.ok) {
                           addNotification('Оплата успешно симулирована!', 'success');
+                          fetchUserOrders();
                           fetchOrders();
                           setPendingYoomoneyPayment(null);
+                          setActiveTab('profile');
                         } else {
                           addNotification('Ошибка симуляции оплаты', 'info');
                         }
