@@ -8,6 +8,47 @@ import nodemailer from 'nodemailer';
 
 dotenv.config();
 
+function buildCodeEmail(title: string, subtitle: string, code: string, minutes: number): string {
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:24px;overflow:hidden;max-width:600px;width:100%;">
+        <tr><td style="background:linear-gradient(135deg,#f97316,#ea6c0a);padding:32px 40px;">
+          <h1 style="margin:0;color:#000;font-size:22px;font-weight:900;text-transform:uppercase;font-style:italic;">Безумно Крутая Шаурма</h1>
+          <p style="margin:6px 0 0;color:rgba(0,0,0,0.6);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">${title}</p>
+        </td></tr>
+        <tr><td style="padding:40px;">
+          <p style="margin:0 0 32px;color:rgba(255,255,255,0.5);font-size:14px;line-height:1.6;">${subtitle}</p>
+          <div style="background:rgba(249,115,22,0.1);border:1px solid rgba(249,115,22,0.3);border-radius:20px;padding:32px;text-align:center;margin-bottom:32px;">
+            <p style="margin:0 0 8px;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:3px;">Код подтверждения</p>
+            <p style="margin:0;color:#f97316;font-size:48px;font-weight:900;letter-spacing:12px;font-style:italic;">${code}</p>
+          </div>
+          <p style="margin:0;color:rgba(255,255,255,0.2);font-size:12px;text-align:center;">Код действителен ${minutes} минут. Не передавайте его никому.</p>
+        </td></tr>
+        <tr><td style="padding:24px 40px;background:rgba(0,0,0,0.3);border-top:1px solid rgba(255,255,255,0.06);">
+          <p style="margin:0;color:rgba(255,255,255,0.2);font-size:11px;text-align:center;">безумнокрутаяшаурма.рф</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
+async function sendEmail(to: string, subject: string, html: string) {
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.yandex.ru',
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: false,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+  await transporter.sendMail({
+    from: `"Безумно Крутая Шаурма" <${process.env.SMTP_USER}>`,
+    to, subject, html,
+  });
+}
+
 const app = express();
 const PORT = 3000;
 
@@ -73,6 +114,29 @@ async function initDb() {
     } catch (err) {
       console.warn('Migration failed or column already exists');
     }
+
+    // Add email_verified column if not exists
+    try {
+      const [vcols]: any = await connection.query("SHOW COLUMNS FROM users LIKE 'email_verified'");
+      if (vcols.length === 0) {
+        await connection.query('ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT TRUE');
+        // existing users are pre-verified
+      }
+    } catch(e) {}
+
+    // Auth codes table
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS auth_codes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        code VARCHAR(6) NOT NULL,
+        type ENUM('verify','reset') NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_email_type (email, type)
+      )
+    `);
 
     // 1. Categories
     await connection.query(`
@@ -512,17 +576,22 @@ initDb();
 // Auth
 app.post('/api/auth/register', async (req, res) => {
   const { phone, email, password, name } = req.body;
-  console.log('Register attempt:', { phone, email, name });
   try {
-    // In a real app, hash the password!
     const [result]: any = await pool.query(
-      'INSERT INTO users (phone, email, password, name) VALUES (?, ?, ?, ?)',
+      'INSERT INTO users (phone, email, password, name, email_verified) VALUES (?, ?, ?, ?, FALSE)',
       [phone, email, password, name]
     );
-    const [user]: any = await pool.query('SELECT id, phone, email, name, role, bonus_balance FROM users WHERE id = ?', [result.insertId]);
-    res.status(201).json(user[0]);
+    // Generate 6-digit code
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+    await pool.query(
+      'INSERT INTO auth_codes (email, code, type, expires_at) VALUES (?, ?, "verify", ?)',
+      [email, code, expires]
+    );
+    const html = buildCodeEmail('Подтверждение регистрации', 'Введите код в приложении для активации аккаунта:', code, 15);
+    await sendEmail(email, 'Подтверждение регистрации — Безумно Крутая Шаурма', html);
+    res.status(201).json({ pending: true, userId: result.insertId, email });
   } catch (err: any) {
-    console.error('Registration error:', err);
     if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Телефон или Email уже зарегистрированы' });
     res.status(500).json({ error: 'Ошибка регистрации: ' + err.message });
   }
@@ -542,6 +611,58 @@ app.post('/api/auth/login', async (req, res) => {
   } catch (err: any) {
     console.error('Login error:', err);
     res.status(500).json({ error: 'Ошибка входа: ' + err.message });
+  }
+});
+
+app.post('/api/auth/verify-email', async (req, res) => {
+  const { email, code } = req.body;
+  try {
+    const [rows]: any = await pool.query(
+      'SELECT * FROM auth_codes WHERE email = ? AND code = ? AND type = "verify" AND used = FALSE AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
+      [email, code]
+    );
+    if (rows.length === 0) return res.status(400).json({ error: 'Неверный или истёкший код' });
+    await pool.query('UPDATE auth_codes SET used = TRUE WHERE id = ?', [rows[0].id]);
+    await pool.query('UPDATE users SET email_verified = TRUE WHERE email = ?', [email]);
+    const [users]: any = await pool.query('SELECT id, phone, email, name, role, bonus_balance FROM users WHERE email = ?', [email]);
+    res.json(users[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка верификации' });
+  }
+});
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  try {
+    const [users]: any = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
+    if (users.length === 0) return res.status(404).json({ error: 'Email не найден' });
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expires = new Date(Date.now() + 15 * 60 * 1000);
+    await pool.query(
+      'INSERT INTO auth_codes (email, code, type, expires_at) VALUES (?, ?, "reset", ?)',
+      [email, code, expires]
+    );
+    const html = buildCodeEmail('Восстановление пароля', 'Используйте этот код для сброса пароля:', code, 15);
+    await sendEmail(email, 'Восстановление пароля — Безумно Крутая Шаурма', html);
+    res.json({ sent: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка отправки письма' });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  try {
+    const [rows]: any = await pool.query(
+      'SELECT * FROM auth_codes WHERE email = ? AND code = ? AND type = "reset" AND used = FALSE AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
+      [email, code]
+    );
+    if (rows.length === 0) return res.status(400).json({ error: 'Неверный или истёкший код' });
+    await pool.query('UPDATE auth_codes SET used = TRUE WHERE id = ?', [rows[0].id]);
+    await pool.query('UPDATE users SET password = ? WHERE email = ?', [newPassword, email]);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Ошибка сброса пароля' });
   }
 });
 
@@ -1392,31 +1513,65 @@ app.post('/api/support', async (req, res) => {
     return res.status(500).json({ error: 'Почта не настроена на сервере' });
   }
 
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false,
-    auth: { user: smtpUser, pass: smtpPass },
-  });
-
-  const html = `
-    <h2>Новая заявка в поддержку — ${subject}</h2>
-    <p><b>Имя:</b> ${name || '—'}</p>
-    <p><b>Телефон:</b> ${phone || '—'}</p>
-    <p><b>Email:</b> ${email || '—'}</p>
-    <p><b>Тема:</b> ${subject}</p>
-    <hr/>
-    <p><b>Сообщение:</b></p>
-    <p>${message.replace(/\n/g, '<br/>')}</p>
-  `;
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:24px;overflow:hidden;max-width:600px;width:100%;">
+        <!-- Header -->
+        <tr><td style="background:linear-gradient(135deg,#f97316,#ea6c0a);padding:32px 40px;">
+          <h1 style="margin:0;color:#000;font-size:22px;font-weight:900;text-transform:uppercase;font-style:italic;letter-spacing:-0.5px;">Безумно Крутая Шаурма</h1>
+          <p style="margin:6px 0 0;color:rgba(0,0,0,0.6);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Новая заявка в поддержку</p>
+        </td></tr>
+        <!-- Subject -->
+        <tr><td style="padding:32px 40px 0;">
+          <p style="margin:0 0 8px;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Тема обращения</p>
+          <p style="margin:0;color:#f97316;font-size:20px;font-weight:900;text-transform:uppercase;font-style:italic;">${subject}</p>
+        </td></tr>
+        <!-- Divider -->
+        <tr><td style="padding:20px 40px;"><div style="height:1px;background:rgba(255,255,255,0.06);"></div></td></tr>
+        <!-- User info -->
+        <tr><td style="padding:0 40px;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td width="50%" style="padding-bottom:16px;">
+                <p style="margin:0 0 4px;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Имя</p>
+                <p style="margin:0;color:#fff;font-size:14px;font-weight:700;">${name || '—'}</p>
+              </td>
+              <td width="50%" style="padding-bottom:16px;">
+                <p style="margin:0 0 4px;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Телефон</p>
+                <p style="margin:0;color:#fff;font-size:14px;font-weight:700;">${phone || '—'}</p>
+              </td>
+            </tr>
+            <tr>
+              <td colspan="2" style="padding-bottom:16px;">
+                <p style="margin:0 0 4px;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Email</p>
+                <p style="margin:0;color:#fff;font-size:14px;font-weight:700;">${email || '—'}</p>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+        <!-- Message -->
+        <tr><td style="padding:0 40px 32px;">
+          <p style="margin:0 0 12px;color:rgba(255,255,255,0.3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Сообщение</p>
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:20px;">
+            <p style="margin:0;color:rgba(255,255,255,0.85);font-size:14px;line-height:1.7;">${message.replace(/\n/g, '<br/>')}</p>
+          </div>
+        </td></tr>
+        <!-- Footer -->
+        <tr><td style="padding:24px 40px;background:rgba(0,0,0,0.3);border-top:1px solid rgba(255,255,255,0.06);">
+          <p style="margin:0;color:rgba(255,255,255,0.2);font-size:11px;text-align:center;">безумнокрутаяшаурма.рф</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 
   try {
-    await transporter.sendMail({
-      from: `"Безумно Крутая Шаурма" <${smtpUser}>`,
-      to: supportEmail,
-      subject: `[Поддержка] ${subject}`,
-      html,
-    });
+    await sendEmail(supportEmail!, `[Поддержка] ${subject}`, html);
     res.json({ success: true });
   } catch (err: any) {
     console.error('Failed to send support email:', err);

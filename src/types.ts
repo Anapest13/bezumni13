@@ -56,8 +56,9 @@ export interface Order {
   rating?: number;
   created_at: string;
   branch_id?: number | null;
-  payment_method?: 'cash' | 'yoomoney';
+  payment_method?: 'cash' | 'platega';
   is_paid?: boolean | number;
+  platega_transaction_id?: string | null;
 }
 
 export interface NewsItem {

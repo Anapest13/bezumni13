@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ShoppingBag,
@@ -71,6 +71,57 @@ const INGREDIENTS = [
 
 type Tab = 'home' | 'menu' | 'cart' | 'profile' | 'admin';
 
+function CustomSelect({
+  value,
+  onChange,
+  options,
+  placeholder = 'Выбрать...',
+  className = '',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  placeholder?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+  const selected = options.find(o => o.value === value);
+  return (
+    <div ref={ref} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v: boolean) => !v)}
+        className={`w-full bg-black/40 border rounded-2xl px-4 py-3 text-sm font-bold text-left flex items-center justify-between transition-colors ${open ? 'border-orange-500/50' : 'border-white/10'}`}
+      >
+        <span className={selected ? 'text-white' : 'text-white/30'}>{selected?.label ?? placeholder}</span>
+        <span className={`text-[10px] text-white/40 transition-transform duration-200 inline-block ${open ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 bg-[#1a1a1a] border border-white/10 rounded-2xl overflow-hidden z-50 shadow-xl max-h-60 overflow-y-auto">
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              className={`w-full px-4 py-3 text-sm font-bold text-left transition-colors hover:bg-white/10 ${value === opt.value ? 'text-orange-500 bg-orange-500/10' : 'text-white'}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [menu, setMenu] = useState<MenuItem[]>(SAMPLE_MENU);
@@ -107,6 +158,14 @@ export default function App() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authForm, setAuthForm] = useState({ phone: '', email: '', password: '', name: '' });
+  const [authStep, setAuthStep] = useState<'form'|'verify'|'forgot'|'forgot-code'|'forgot-pass'>('form');
+  const [verifyEmail, setVerifyEmail] = useState('');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotNewPass, setForgotNewPass] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
   const [userOrders, setUserOrders] = useState<Order[]>([]);
   const [popularProducts, setPopularProducts] = useState<MenuItem[]>([]);
   const [news, setNews] = useState<NewsItem[]>([]);
@@ -707,24 +766,47 @@ export default function App() {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    setAuthLoading(true);
+    setAuthError('');
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(authForm)
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setUser(data);
-        setIsAuthOpen(false);
-        addNotification(authMode === 'login' ? 'С возвращением!' : 'Добро пожаловать!');
+      if (authMode === 'login') {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(authForm),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setUser(data);
+          setIsAuthOpen(false);
+          setAuthStep('form');
+          addNotification('С возвращением!');
+        } else {
+          setAuthError(data.error || 'Ошибка входа');
+        }
       } else {
-        alert(data.error || 'Ошибка авторизации');
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(authForm),
+        });
+        const data = await res.json();
+        if (res.ok && data.pending) {
+          setVerifyEmail(authForm.email);
+          setAuthStep('verify');
+        } else if (res.ok) {
+          setUser(data);
+          setIsAuthOpen(false);
+          setAuthStep('form');
+          addNotification('Добро пожаловать!');
+        } else {
+          setAuthError(data.error || 'Ошибка регистрации');
+        }
       }
-    } catch (err) {
-      console.error(err);
-      alert('Сетевая ошибка. Попробуйте позже.');
+    } catch {
+      setAuthError('Сетевая ошибка. Попробуйте позже.');
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -1589,99 +1671,288 @@ export default function App() {
         <AnimatePresence>
           {isAuthOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                onClick={() => setIsAuthOpen(false)}
+                onClick={() => { setIsAuthOpen(false); setAuthStep('form'); setAuthError(''); }}
                 className="absolute inset-0 bg-black/80 backdrop-blur-md"
               />
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: 20 }}
                 className="relative w-full max-w-md bg-zinc-900 border border-white/10 rounded-[40px] p-8 shadow-2xl"
               >
-                <h3 className="text-2xl font-black uppercase italic mb-6">
-                  {authMode === 'login' ? 'Вход' : 'Регистрация'}
-                </h3>
-                <form onSubmit={handleAuth} className="space-y-4">
-                  {authMode === 'login' ? (
+                {/* STEP: Email verification after register */}
+                {authStep === 'verify' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-2xl font-black uppercase italic mb-1">Подтверждение</h3>
+                      <p className="text-white/40 text-sm">Код отправлен на <span className="text-orange-500 font-bold">{verifyEmail}</span></p>
+                    </div>
                     <div className="space-y-2">
-                      <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон или Email</p>
-                      <input 
-                        type="text" 
-                        placeholder="+7 (___) ___-__-__ или email@example.com"
-                        value={authForm.phone}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (/^[\d+]/.test(val) && !val.includes('@')) {
-                            setAuthForm({...authForm, phone: formatPhone(val)});
-                          } else {
-                            setAuthForm({...authForm, phone: val});
-                          }
-                        }}
-                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                        required
+                      <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Код из письма</p>
+                      <input
+                        type="text"
+                        maxLength={6}
+                        placeholder="_ _ _ _ _ _"
+                        value={verifyCode}
+                        onChange={e => setVerifyCode(e.target.value.replace(/\D/g,''))}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all text-center text-2xl font-black tracking-[0.5em]"
                       />
                     </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {authMode === 'register' && (
+                    {authError && <p className="text-red-500 text-xs font-bold text-center">{authError}</p>}
+                    <button
+                      disabled={verifyCode.length < 6 || authLoading}
+                      onClick={async () => {
+                        setAuthLoading(true); setAuthError('');
+                        try {
+                          const res = await fetch('/api/auth/verify-email', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: verifyEmail, code: verifyCode }),
+                          });
+                          const data = await res.json();
+                          if (res.ok) {
+                            setUser(data);
+                            setIsAuthOpen(false);
+                            setAuthStep('form');
+                            addNotification('Добро пожаловать!');
+                          } else {
+                            setAuthError(data.error || 'Неверный код');
+                          }
+                        } catch { setAuthError('Сетевая ошибка'); }
+                        finally { setAuthLoading(false); }
+                      }}
+                      className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl uppercase italic shadow-lg shadow-orange-500/20 disabled:opacity-40"
+                    >
+                      {authLoading ? 'Проверка...' : 'Подтвердить'}
+                    </button>
+                    <button onClick={() => { setAuthStep('form'); setVerifyCode(''); setAuthError(''); }} className="w-full text-white/40 text-xs font-bold uppercase tracking-widest">
+                      Назад
+                    </button>
+                  </div>
+                )}
+
+                {/* STEP: Forgot password — enter email */}
+                {authStep === 'forgot' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-2xl font-black uppercase italic mb-1">Забыли пароль?</h3>
+                      <p className="text-white/40 text-sm">Введите email — пришлём код для сброса</p>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Email</p>
+                      <input
+                        type="email"
+                        placeholder="email@example.com"
+                        value={forgotEmail}
+                        onChange={e => setForgotEmail(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                      />
+                    </div>
+                    {authError && <p className="text-red-500 text-xs font-bold text-center">{authError}</p>}
+                    <button
+                      disabled={!forgotEmail || authLoading}
+                      onClick={async () => {
+                        setAuthLoading(true); setAuthError('');
+                        try {
+                          const res = await fetch('/api/auth/forgot-password', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: forgotEmail }),
+                          });
+                          const data = await res.json();
+                          if (res.ok) { setAuthStep('forgot-code'); }
+                          else { setAuthError(data.error || 'Ошибка'); }
+                        } catch { setAuthError('Сетевая ошибка'); }
+                        finally { setAuthLoading(false); }
+                      }}
+                      className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl uppercase italic shadow-lg shadow-orange-500/20 disabled:opacity-40"
+                    >
+                      {authLoading ? 'Отправка...' : 'Отправить код'}
+                    </button>
+                    <button onClick={() => { setAuthStep('form'); setForgotEmail(''); setAuthError(''); }} className="w-full text-white/40 text-xs font-bold uppercase tracking-widest">
+                      Назад
+                    </button>
+                  </div>
+                )}
+
+                {/* STEP: Forgot password — enter code */}
+                {authStep === 'forgot-code' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-2xl font-black uppercase italic mb-1">Введите код</h3>
+                      <p className="text-white/40 text-sm">Код отправлен на <span className="text-orange-500 font-bold">{forgotEmail}</span></p>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Код из письма</p>
+                      <input
+                        type="text"
+                        maxLength={6}
+                        placeholder="_ _ _ _ _ _"
+                        value={forgotCode}
+                        onChange={e => setForgotCode(e.target.value.replace(/\D/g,''))}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all text-center text-2xl font-black tracking-[0.5em]"
+                      />
+                    </div>
+                    {authError && <p className="text-red-500 text-xs font-bold text-center">{authError}</p>}
+                    <button
+                      disabled={forgotCode.length < 6 || authLoading}
+                      onClick={() => { setAuthStep('forgot-pass'); setAuthError(''); }}
+                      className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl uppercase italic shadow-lg shadow-orange-500/20 disabled:opacity-40"
+                    >
+                      Далее
+                    </button>
+                    <button onClick={() => { setAuthStep('forgot'); setForgotCode(''); setAuthError(''); }} className="w-full text-white/40 text-xs font-bold uppercase tracking-widest">
+                      Назад
+                    </button>
+                  </div>
+                )}
+
+                {/* STEP: Forgot password — enter new password */}
+                {authStep === 'forgot-pass' && (
+                  <div className="space-y-6">
+                    <div>
+                      <h3 className="text-2xl font-black uppercase italic mb-1">Новый пароль</h3>
+                      <p className="text-white/40 text-sm">Придумайте новый пароль</p>
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Новый пароль</p>
+                      <input
+                        type="password"
+                        placeholder="Минимум 6 символов"
+                        value={forgotNewPass}
+                        onChange={e => setForgotNewPass(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                      />
+                    </div>
+                    {authError && <p className="text-red-500 text-xs font-bold text-center">{authError}</p>}
+                    <button
+                      disabled={forgotNewPass.length < 6 || authLoading}
+                      onClick={async () => {
+                        setAuthLoading(true); setAuthError('');
+                        try {
+                          const res = await fetch('/api/auth/reset-password', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: forgotEmail, code: forgotCode, newPassword: forgotNewPass }),
+                          });
+                          const data = await res.json();
+                          if (res.ok) {
+                            setAuthStep('form');
+                            setAuthMode('login');
+                            setForgotEmail(''); setForgotCode(''); setForgotNewPass('');
+                            addNotification('Пароль успешно изменён!');
+                          } else {
+                            setAuthError(data.error || 'Ошибка');
+                          }
+                        } catch { setAuthError('Сетевая ошибка'); }
+                        finally { setAuthLoading(false); }
+                      }}
+                      className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl uppercase italic shadow-lg shadow-orange-500/20 disabled:opacity-40"
+                    >
+                      {authLoading ? 'Сохранение...' : 'Сохранить пароль'}
+                    </button>
+                    <button onClick={() => { setAuthStep('forgot-code'); setForgotNewPass(''); setAuthError(''); }} className="w-full text-white/40 text-xs font-bold uppercase tracking-widest">
+                      Назад
+                    </button>
+                  </div>
+                )}
+
+                {/* STEP: Normal login/register form */}
+                {authStep === 'form' && (
+                  <>
+                    <h3 className="text-2xl font-black uppercase italic mb-6">
+                      {authMode === 'login' ? 'Вход' : 'Регистрация'}
+                    </h3>
+                    <form onSubmit={handleAuth} className="space-y-4">
+                      {authMode === 'login' ? (
                         <div className="space-y-2">
-                          <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Имя</p>
-                          <input 
-                            type="text" 
-                            placeholder="Имя"
-                            value={authForm.name}
-                            onChange={(e) => setAuthForm({...authForm, name: e.target.value})}
+                          <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон или Email</p>
+                          <input
+                            type="text"
+                            placeholder="+7 (___) ___-__-__ или email@example.com"
+                            value={authForm.phone}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (/^[\d+]/.test(val) && !val.includes('@')) {
+                                setAuthForm({...authForm, phone: formatPhone(val)});
+                              } else {
+                                setAuthForm({...authForm, phone: val});
+                              }
+                            }}
                             className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
                             required
                           />
                         </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Имя</p>
+                            <input
+                              type="text"
+                              placeholder="Имя"
+                              value={authForm.name}
+                              onChange={(e) => setAuthForm({...authForm, name: e.target.value})}
+                              className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                              required
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон</p>
+                            <input
+                              type="tel"
+                              placeholder="+7 (___) ___-__-__"
+                              value={authForm.phone}
+                              onChange={(e) => setAuthForm({...authForm, phone: formatPhone(e.target.value)})}
+                              className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                              required
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Email</p>
+                            <input
+                              type="email"
+                              placeholder="email@example.com"
+                              value={authForm.email}
+                              onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
+                              className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                              required
+                            />
+                          </div>
+                        </div>
                       )}
-                      <div className="space-y-2">
-                        <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Телефон</p>
-                        <input 
-                          type="tel" 
-                          placeholder="+7 (___) ___-__-__"
-                          value={authForm.phone}
-                          onChange={(e) => setAuthForm({...authForm, phone: formatPhone(e.target.value)})}
-                          className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <p className="text-[10px] font-bold uppercase text-white/20 ml-4">Email</p>
-                        <input 
-                          type="email" 
-                          placeholder="email@example.com"
-                          value={authForm.email}
-                          onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
-                          className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                          required
-                        />
-                      </div>
-                    </div>
-                  )}
-                  <input 
-                    type="password" 
-                    placeholder="Пароль"
-                    value={authForm.password}
-                    onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
-                    required
-                  />
-                  <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl uppercase italic shadow-lg shadow-orange-500/20">
-                    {authMode === 'login' ? 'Войти' : 'Создать аккаунт'}
-                  </button>
-                </form>
-                <button 
-                  onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-                  className="w-full mt-6 text-white/40 text-xs font-bold uppercase tracking-widest"
-                >
-                  {authMode === 'login' ? 'Нет аккаунта? Регистрация' : 'Уже есть аккаунт? Вход'}
-                </button>
+                      <input
+                        type="password"
+                        placeholder="Пароль"
+                        value={authForm.password}
+                        onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 outline-none focus:border-orange-500 transition-all"
+                        required
+                      />
+                      {authError && <p className="text-red-500 text-xs font-bold text-center">{authError}</p>}
+                      <button disabled={authLoading} className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl uppercase italic shadow-lg shadow-orange-500/20 disabled:opacity-40">
+                        {authLoading ? 'Загрузка...' : (authMode === 'login' ? 'Войти' : 'Создать аккаунт')}
+                      </button>
+                    </form>
+                    {authMode === 'login' && (
+                      <button
+                        onClick={() => { setAuthStep('forgot'); setForgotEmail(''); setAuthError(''); }}
+                        className="w-full mt-3 text-orange-500/60 text-xs font-bold uppercase tracking-widest hover:text-orange-500 transition-colors"
+                      >
+                        Забыли пароль?
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }}
+                      className="w-full mt-3 text-white/40 text-xs font-bold uppercase tracking-widest"
+                    >
+                      {authMode === 'login' ? 'Нет аккаунта? Регистрация' : 'Уже есть аккаунт? Вход'}
+                    </button>
+                  </>
+                )}
               </motion.div>
             </div>
           )}
@@ -3295,16 +3566,12 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
           </h4>
           <p className="text-[9px] text-white/40 uppercase font-black tracking-widest">Фильтрация заказов, новостей, акций, промокодов и отзывов</p>
         </div>
-        <select
+        <CustomSelect
           value={adminBranchFilter}
-          onChange={(e) => setAdminBranchFilter(e.target.value)}
-          className="bg-black/80 border border-white/10 rounded-2xl py-2.5 px-4 text-xs font-bold text-white outline-none focus:border-orange-500 min-w-[220px] transition-all cursor-pointer"
-        >
-          <option value="all">Все филиалы (Показать всё)</option>
-          {adminBranches.map(b => (
-            <option key={b.id} value={b.id}>{b.address} ({b.city_name || 'Неизвестно'})</option>
-          ))}
-        </select>
+          onChange={setAdminBranchFilter}
+          options={[{value:'all',label:'Все филиалы (Показать всё)'}, ...adminBranches.map(b=>({value:String(b.id),label:`${b.address} (${b.city_name||'Неизвестно'})`}))]}
+          className="min-w-[220px]"
+        />
       </div>
 
       <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10 overflow-x-auto gap-1 no-scrollbar">
@@ -3401,22 +3668,17 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
               <div className="flex items-center gap-2">
                 <div className="flex-1 bg-zinc-800 rounded-xl px-3 py-2.5 flex items-center gap-2 border border-white/10 shadow-inner group hover:border-orange-500/50 transition-all relative">
                   {getStatusIcon(order.status)}
-                  <select 
+                  <CustomSelect
                     value={order.status}
-                    onChange={(e) => updateStatus(order.id, e.target.value)}
-                    className="bg-zinc-800 text-[10px] font-black uppercase outline-none w-full text-white cursor-pointer appearance-none selection:bg-orange-500 pr-6"
-                  >
-                    <option value="pending" className="bg-zinc-900 border-none">Ожидает</option>
-                    <option value="preparing" className="bg-zinc-900 border-none">Готовится</option>
-                    <option value="ready" className="bg-zinc-900 border-none">Готов</option>
-                    <option value="delivered" className="bg-zinc-900 border-none">Доставлен</option>
-                    <option value="cancelled" className="bg-zinc-900 border-none">Отменен</option>
-                  </select>
-                  <div className="absolute right-3 pointer-events-none opacity-40">
-                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  </div>
+                    onChange={(v) => updateStatus(order.id, v)}
+                    options={[
+                      {value:'pending',label:'Ожидает'},
+                      {value:'preparing',label:'Готовится'},
+                      {value:'ready',label:'Готов'},
+                      {value:'delivered',label:'Доставлен'},
+                      {value:'cancelled',label:'Отменен'},
+                    ]}
+                  />
                 </div>
                 
                 <button
@@ -3479,24 +3741,16 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                   required
                 />
                 <div className="grid grid-cols-2 gap-3">
-                  <select 
+                  <CustomSelect
                     value={newNews.type}
-                    onChange={(e) => setNewNews({...newNews, type: e.target.value})}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 font-bold"
-                  >
-                    <option value="news">Новость</option>
-                    <option value="promo">Акция</option>
-                  </select>
-                  <select 
+                    onChange={(v) => setNewNews({...newNews, type: v})}
+                    options={[{value:'news',label:'Новость'},{value:'promo',label:'Акция'}]}
+                  />
+                  <CustomSelect
                     value={newNews.branch_id}
-                    onChange={(e) => setNewNews({...newNews, branch_id: e.target.value})}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 text-white font-bold"
-                  >
-                    <option value="">Общая новость</option>
-                    {adminBranches.map(b => (
-                      <option key={b.id} value={b.id}>{b.address} ({b.city_name || 'Неизвестно'})</option>
-                    ))}
-                  </select>
+                    onChange={(v) => setNewNews({...newNews, branch_id: v})}
+                    options={[{value:'',label:'Общая новость'},...adminBranches.map(b=>({value:String(b.id),label:`${b.address} (${b.city_name||'Неизвестно'})`}))]}
+                  />
                 </div>
 
                 <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl text-sm uppercase italic shadow-lg shadow-orange-500/20 mt-4">
@@ -3541,24 +3795,16 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                   required
                 />
                 <div className="grid grid-cols-2 gap-3">
-                  <select 
+                  <CustomSelect
                     value={editingNews.type}
-                    onChange={(e) => setEditingNews({...editingNews, type: e.target.value as any})}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 font-bold"
-                  >
-                    <option value="news">Новость</option>
-                    <option value="promo">Акция</option>
-                  </select>
-                  <select 
-                    value={editingNews.branch_id || ''}
-                    onChange={(e) => setEditingNews({...editingNews, branch_id: e.target.value ? parseInt(e.target.value) : null})}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 text-white font-bold"
-                  >
-                    <option value="">Общая новость</option>
-                    {adminBranches.map(b => (
-                      <option key={b.id} value={b.id}>{b.address} ({b.city_name || 'Неизвестно'})</option>
-                    ))}
-                  </select>
+                    onChange={(v) => setEditingNews({...editingNews, type: v as any})}
+                    options={[{value:'news',label:'Новость'},{value:'promo',label:'Акция'}]}
+                  />
+                  <CustomSelect
+                    value={editingNews.branch_id ? String(editingNews.branch_id) : ''}
+                    onChange={(v) => setEditingNews({...editingNews, branch_id: v ? parseInt(v) : null})}
+                    options={[{value:'',label:'Общая новость'},...adminBranches.map((b: Branch)=>({value:String(b.id),label:`${b.address} (${b.city_name||'Неизвестно'})`}))]}
+                  />
                 </div>
 
                 <button className="w-full bg-orange-500 text-black font-black py-4 rounded-2xl text-sm uppercase italic shadow-lg shadow-orange-500/20 mt-4">
