@@ -953,7 +953,7 @@ export default function App() {
                 <span className="text-[8px] text-white/40 font-mono">▼</span>
               </button>
             </div>
-            <h2 className="text-2xl font-black italic uppercase tracking-tighter">Крутая Шаурма</h2>
+            <img src="/logo.svg" alt="Безумно Крутая Шаурма" className="h-8 w-auto invert" />
           </div>
           <div className="relative">
             <button 
