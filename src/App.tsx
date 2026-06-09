@@ -133,6 +133,7 @@ export default function App() {
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [supportForm, setSupportForm] = useState({ subject: '', message: '' });
   const [supportStatus, setSupportStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
   
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
@@ -2239,21 +2240,47 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="space-y-2">
+                    <div className="space-y-2 relative">
                       <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Тема обращения</label>
-                      <select
-                        value={supportForm.subject}
-                        onChange={e => setSupportForm(f => ({ ...f, subject: e.target.value }))}
-                        className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold focus:outline-none focus:border-orange-500/50 transition-colors appearance-none"
+                      <button
+                        type="button"
+                        onClick={() => setShowSubjectDropdown((v: boolean) => !v)}
+                        className={`w-full bg-white/5 border rounded-2xl px-4 py-3 text-sm font-bold text-left flex items-center justify-between transition-colors ${showSubjectDropdown ? 'border-orange-500/50' : 'border-white/10'}`}
                       >
-                        <option value="">Выберите тему...</option>
-                        <option value="Проблема с заказом">Проблема с заказом</option>
-                        <option value="Вопрос по оплате">Вопрос по оплате</option>
-                        <option value="Качество блюд">Качество блюд</option>
-                        <option value="Доставка">Доставка</option>
-                        <option value="Бонусы и промокоды">Бонусы и промокоды</option>
-                        <option value="Другое">Другое</option>
-                      </select>
+                        <span className={supportForm.subject ? 'text-white' : 'text-white/30'}>
+                          {supportForm.subject || 'Выберите тему...'}
+                        </span>
+                        <span className={`text-[10px] text-white/40 transition-transform duration-200 ${showSubjectDropdown ? 'rotate-180' : ''}`}>▼</span>
+                      </button>
+                      <AnimatePresence>
+                        {showSubjectDropdown && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -8 }}
+                            transition={{ duration: 0.15 }}
+                            className="absolute left-0 right-0 top-full mt-2 bg-[#1a1a1a] border border-white/10 rounded-2xl overflow-hidden z-10 shadow-xl"
+                          >
+                            {[
+                              'Проблема с заказом',
+                              'Вопрос по оплате',
+                              'Качество блюд',
+                              'Доставка',
+                              'Бонусы и промокоды',
+                              'Другое',
+                            ].map(opt => (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => { setSupportForm((f: {subject: string; message: string}) => ({ ...f, subject: opt })); setShowSubjectDropdown(false); }}
+                                className={`w-full px-4 py-3 text-sm font-bold text-left transition-colors hover:bg-white/10 ${supportForm.subject === opt ? 'text-orange-500 bg-orange-500/10' : 'text-white'}`}
+                              >
+                                {opt}
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
 
                     <div className="space-y-2">
