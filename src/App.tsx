@@ -130,6 +130,9 @@ export default function App() {
   const [pendingPlategaPayment, setPendingPlategaPayment] = useState<{ orderId: number; redirect: string; total: number } | null>(null);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showDataPolicy, setShowDataPolicy] = useState(false);
+  const [showSupportModal, setShowSupportModal] = useState(false);
+  const [supportForm, setSupportForm] = useState({ subject: '', message: '' });
+  const [supportStatus, setSupportStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
@@ -1361,7 +1364,13 @@ export default function App() {
                     <p className="text-[10px] text-orange-500 font-black uppercase tracking-widest">Бонусный баланс</p>
                     <p className="text-3xl font-black italic text-orange-500">{user.bonus_balance} ₽</p>
                   </div>
-                  <button 
+                  <button
+                    onClick={() => { setShowSupportModal(true); setSupportStatus('idle'); setSupportForm({ subject: '', message: '' }); }}
+                    className="w-full py-3 bg-orange-500/10 border border-orange-500/30 rounded-2xl text-orange-500 text-xs font-black uppercase tracking-widest hover:bg-orange-500/20 transition-all"
+                  >
+                    Написать в поддержку
+                  </button>
+                  <button
                     onClick={() => setUser(null)}
                     className="text-red-500 text-xs font-bold uppercase tracking-widest"
                   >
@@ -2193,6 +2202,107 @@ export default function App() {
             Политика обработки данных
           </button>
         </footer>
+
+        {/* Support Modal */}
+        <AnimatePresence>
+          {showSupportModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
+              onClick={() => setShowSupportModal(false)}
+            >
+              <motion.div
+                initial={{ y: 60, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 60, opacity: 0 }}
+                transition={{ type: 'spring', damping: 25 }}
+                className="bg-[#111] border border-white/10 rounded-[32px] w-full max-w-md p-6 space-y-5"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-black uppercase italic">Поддержка</h3>
+                  <button onClick={() => setShowSupportModal(false)} className="p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-all">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {supportStatus === 'sent' ? (
+                  <div className="text-center py-8 space-y-3">
+                    <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto" />
+                    <p className="text-lg font-black uppercase italic text-green-500">Заявка отправлена!</p>
+                    <p className="text-white/40 text-sm">Мы свяжемся с вами в ближайшее время</p>
+                    <button onClick={() => setShowSupportModal(false)} className="mt-4 px-6 py-2.5 bg-orange-500 text-black text-xs font-black uppercase rounded-2xl">
+                      Закрыть
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Тема обращения</label>
+                      <select
+                        value={supportForm.subject}
+                        onChange={e => setSupportForm(f => ({ ...f, subject: e.target.value }))}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold focus:outline-none focus:border-orange-500/50 transition-colors appearance-none"
+                      >
+                        <option value="">Выберите тему...</option>
+                        <option value="Проблема с заказом">Проблема с заказом</option>
+                        <option value="Вопрос по оплате">Вопрос по оплате</option>
+                        <option value="Качество блюд">Качество блюд</option>
+                        <option value="Доставка">Доставка</option>
+                        <option value="Бонусы и промокоды">Бонусы и промокоды</option>
+                        <option value="Другое">Другое</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-white/40">Сообщение</label>
+                      <textarea
+                        rows={4}
+                        placeholder="Опишите вашу проблему или вопрос..."
+                        value={supportForm.message}
+                        onChange={e => setSupportForm(f => ({ ...f, message: e.target.value }))}
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold resize-none focus:outline-none focus:border-orange-500/50 transition-colors placeholder:text-white/20"
+                      />
+                    </div>
+
+                    {supportStatus === 'error' && (
+                      <p className="text-red-500 text-xs font-bold">Не удалось отправить. Попробуйте позже.</p>
+                    )}
+
+                    <button
+                      disabled={supportStatus === 'sending' || !supportForm.subject || !supportForm.message.trim()}
+                      onClick={async () => {
+                        setSupportStatus('sending');
+                        try {
+                          const r = await fetch('/api/support', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              name: user?.name,
+                              phone: user?.phone,
+                              email: user?.email,
+                              subject: supportForm.subject,
+                              message: supportForm.message,
+                            }),
+                          });
+                          if (r.ok) setSupportStatus('sent');
+                          else setSupportStatus('error');
+                        } catch {
+                          setSupportStatus('error');
+                        }
+                      }}
+                      className="w-full py-4 bg-orange-500 text-black font-black uppercase rounded-2xl text-sm tracking-wide disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
+                    >
+                      {supportStatus === 'sending' ? 'Отправка...' : 'Отправить заявку'}
+                    </button>
+                  </div>
+                )}
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Privacy Policy Modal */}
         <AnimatePresence>

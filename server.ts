@@ -4,7 +4,7 @@ import mysql from 'mysql2/promise';
 import cors from 'cors';
 import path from 'path';
 import dotenv from 'dotenv';
-import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -155,6 +155,16 @@ async function initDb() {
       }
     } catch (err) {
       console.warn('Migration for orders is_paid failed:', err);
+    }
+
+    try {
+      const [colsPlatega]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'platega_transaction_id'");
+      if (colsPlatega.length === 0) {
+        console.log('Adding platega_transaction_id column to orders table...');
+        await connection.query("ALTER TABLE orders ADD COLUMN platega_transaction_id VARCHAR(100) DEFAULT NULL AFTER is_paid");
+      }
+    } catch (err) {
+      console.warn('Migration for orders platega_transaction_id failed:', err);
     }
 
     // 7. News/Carousel
@@ -776,22 +786,61 @@ app.post('/api/orders', async (req, res) => {
  
     await connection.commit();
 
-    let yoomoneyUrl = null;
-    if (paymentMethod === 'yoomoney') {
-      const receiver = process.env.YOOMONEY_WALLET_NUMBER || '4100115538965851';
-      const targets = `Оплата заказа №${orderId} в Крутая Шаурма`;
-      const host = req.get('host') || 'localhost:3000';
-      const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
-      const protocol = isHttps ? 'https' : 'http';
-      const isLocalHost = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
-      const successURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
-        ? `${protocol}://${host}/?orderId=${orderId}&payment=success`
-        : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=success`;
-      
-      yoomoneyUrl = `https://yoomoney.ru/quickpay/confirm.xml?receiver=${receiver}&quickpay-form=shop&targets=${encodeURIComponent(targets)}&paymentType=AC&sum=${total_amount}&label=${orderId}&successURL=${encodeURIComponent(successURL)}`;
+    let platega_redirect: string | null = null;
+    let platega_transaction_id: string | null = null;
+
+    if (paymentMethod === 'platega') {
+      const merchantId = process.env.PLATEGA_MERCHANT_ID;
+      const secret = process.env.PLATEGA_SECRET;
+      if (merchantId && secret) {
+        try {
+          const host = req.get('host') || 'localhost:3000';
+          const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+          const protocol = isHttps ? 'https' : 'http';
+          const isLocalHost = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
+          const successURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
+            ? `${protocol}://${host}/?orderId=${orderId}&payment=success`
+            : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=success`;
+          const failedURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
+            ? `${protocol}://${host}/?orderId=${orderId}&payment=failed`
+            : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=failed`;
+
+          const plategaRes = await fetch('https://app.platega.io/transaction/process', {
+            method: 'POST',
+            headers: {
+              'X-MerchantId': merchantId,
+              'X-Secret': secret,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              paymentMethod: 2,
+              paymentDetails: { amount: total_amount, currency: 'RUB' },
+              description: `Оплата заказа №${orderId} в Крутая Шаурма`,
+              return: successURL,
+              failedUrl: failedURL,
+              payload: String(orderId)
+            })
+          });
+
+          if (plategaRes.ok) {
+            const plategaData = await plategaRes.json();
+            platega_transaction_id = plategaData.transactionId || null;
+            platega_redirect = plategaData.redirect || null;
+            if (platega_transaction_id) {
+              await pool.query('UPDATE orders SET platega_transaction_id = ? WHERE id = ?', [platega_transaction_id, orderId]);
+            }
+          } else {
+            console.error('Platega API error:', await plategaRes.text());
+          }
+        } catch (plategaErr) {
+          console.error('Platega payment creation failed:', plategaErr);
+        }
+      } else {
+        console.warn('PLATEGA_MERCHANT_ID or PLATEGA_SECRET not set in environment');
+      }
     }
 
-    res.status(201).json({ id: orderId, status: 'pending', yoomoneyUrl });
+    res.status(201).json({ id: orderId, status: 'pending', platega_redirect, platega_transaction_id });
   } catch (err) {
     await connection.rollback();
     console.error('Order error:', err);
@@ -801,64 +850,113 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-// YooMoney Webhook Receiver
-app.post('/api/payment/yoomoney-webhook', async (req, res) => {
-  console.log('Received YooMoney webhook:', req.body);
-  const {
-    notification_type,
-    operation_id,
-    amount,
-    currency,
-    datetime,
-    sender,
-    codepro,
-    label,
-    sha1_hash
-  } = req.body;
+// Platega Webhook Receiver (СБП QR)
+app.post('/api/payment/platega-webhook', async (req, res) => {
+  console.log('Received Platega webhook:', req.body);
 
-  if (!label) {
-    return res.status(400).send('Missing order label');
+  // Verify credentials from Platega headers
+  const incomingMerchantId = req.headers['x-merchantid'] as string;
+  const incomingSecret = req.headers['x-secret'] as string;
+
+  if (
+    process.env.PLATEGA_MERCHANT_ID &&
+    (incomingMerchantId !== process.env.PLATEGA_MERCHANT_ID || incomingSecret !== process.env.PLATEGA_SECRET)
+  ) {
+    console.warn('Platega webhook: invalid credentials');
+    return res.status(401).send('Unauthorized');
   }
 
-  const secret = process.env.YOOMONEY_SECRET_KEY || 'test_secret';
-  
-  // Verify checksum
-  const paramString = `${notification_type}&${operation_id}&${amount}&${currency}&${datetime}&${sender}&${codepro}&${secret}&${label}`;
-  const computedHash = crypto.createHash('sha1').update(paramString).digest('hex');
+  const { id: transactionId, status, payload } = req.body;
 
-  const isVerified = (computedHash === sha1_hash) || (!process.env.YOOMONEY_SECRET_KEY);
-  
-  if (!isVerified) {
-    console.warn(`YooMoney signature verification failed. Generated: ${computedHash}, Received: ${sha1_hash}`);
-    return res.status(403).send('Signature mismatch');
+  if (!payload) {
+    return res.status(400).send('Missing payload');
   }
 
-  const orderId = parseInt(label);
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    // Verify order exists
-    const [orders]: any = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
-    if (orders.length === 0) {
+  const orderId = parseInt(payload);
+  if (isNaN(orderId)) {
+    return res.status(400).send('Invalid order id in payload');
+  }
+
+  if (status === 'CONFIRMED') {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [orders]: any = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+      if (orders.length === 0) {
+        connection.release();
+        return res.status(404).send('Order not found');
+      }
+      await connection.query(
+        "UPDATE orders SET is_paid = 1, status = CASE WHEN status = 'pending' THEN 'preparing' ELSE status END, platega_transaction_id = ? WHERE id = ?",
+        [transactionId || null, orderId]
+      );
+      await connection.commit();
+      console.log(`Order #${orderId} marked as paid via Platega (txn: ${transactionId}).`);
+    } catch (err) {
+      await connection.rollback();
+      console.error('Platega webhook processing error:', err);
+      return res.status(500).send('Internal error');
+    } finally {
       connection.release();
-      return res.status(404).send('Order not found');
+    }
+  } else {
+    console.log(`Platega webhook: order #${orderId} status = ${status} (no action)`);
+  }
+
+  res.status(200).send('OK');
+});
+
+// Create a fresh Platega payment link for an existing unpaid order
+app.post('/api/orders/:id/platega-link', async (req, res) => {
+  const orderId = parseInt(req.params.id);
+  const merchantId = process.env.PLATEGA_MERCHANT_ID;
+  const secret = process.env.PLATEGA_SECRET;
+
+  try {
+    const [orders]: any = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+    if (orders.length === 0) return res.status(404).json({ error: 'Order not found' });
+    const order = orders[0];
+    if (order.is_paid) return res.status(400).json({ error: 'Order already paid' });
+
+    if (!merchantId || !secret) {
+      return res.status(503).json({ error: 'Platega not configured' });
     }
 
-    // Set order as paid and change status to 'preparing'
-    await connection.query(
-      "UPDATE orders SET is_paid = 1, status = CASE WHEN status = 'pending' THEN 'preparing' ELSE status END WHERE id = ?",
-      [orderId]
-    );
+    const host = req.get('host') || 'localhost:3000';
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const protocol = isHttps ? 'https' : 'http';
+    const isLocalHost = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
+    const successURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
+      ? `${protocol}://${host}/?orderId=${orderId}&payment=success`
+      : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=success`;
+    const failedURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
+      ? `${protocol}://${host}/?orderId=${orderId}&payment=failed`
+      : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=failed`;
 
-    await connection.commit();
-    console.log(`Order #${orderId} marked as successfully paid via YooMoney.`);
-    res.status(200).send('OK');
+    const plategaRes = await fetch('https://app.platega.io/transaction/process', {
+      method: 'POST',
+      headers: { 'X-MerchantId': merchantId, 'X-Secret': secret, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paymentMethod: 2,
+        paymentDetails: { amount: order.total_amount, currency: 'RUB' },
+        description: `Оплата заказа №${orderId} в Крутая Шаурма`,
+        return: successURL,
+        failedUrl: failedURL,
+        payload: String(orderId)
+      })
+    });
+
+    if (!plategaRes.ok) {
+      return res.status(502).json({ error: 'Platega API error' });
+    }
+    const data = await plategaRes.json();
+    if (data.transactionId) {
+      await pool.query('UPDATE orders SET platega_transaction_id = ? WHERE id = ?', [data.transactionId, orderId]);
+    }
+    res.json({ redirect: data.redirect, transactionId: data.transactionId });
   } catch (err) {
-    await connection.rollback();
-    console.error('YooMoney webhook processing error:', err);
-    res.status(500).send('Internal error');
-  } finally {
-    connection.release();
+    console.error('Failed to create Platega link:', err);
+    res.status(500).json({ error: 'Failed to create payment link' });
   }
 });
 
@@ -1275,6 +1373,54 @@ app.post('/api/admin/stock', async (req, res) => {
   } catch (err) {
     console.error('Failed to update stock:', err);
     res.status(500).json({ error: 'Failed to update stock' });
+  }
+});
+
+// Support request endpoint
+app.post('/api/support', async (req, res) => {
+  const { name, phone, email, subject, message } = req.body;
+  if (!subject || !message) {
+    return res.status(400).json({ error: 'Заполните тему и сообщение' });
+  }
+
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const supportEmail = process.env.SUPPORT_EMAIL || smtpUser;
+
+  if (!smtpUser || !smtpPass) {
+    console.error('SMTP credentials not configured');
+    return res.status(500).json({ error: 'Почта не настроена на сервере' });
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: false,
+    auth: { user: smtpUser, pass: smtpPass },
+  });
+
+  const html = `
+    <h2>Новая заявка в поддержку — ${subject}</h2>
+    <p><b>Имя:</b> ${name || '—'}</p>
+    <p><b>Телефон:</b> ${phone || '—'}</p>
+    <p><b>Email:</b> ${email || '—'}</p>
+    <p><b>Тема:</b> ${subject}</p>
+    <hr/>
+    <p><b>Сообщение:</b></p>
+    <p>${message.replace(/\n/g, '<br/>')}</p>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Безумно Крутая Шаурма" <${smtpUser}>`,
+      to: supportEmail,
+      subject: `[Поддержка] ${subject}`,
+      html,
+    });
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Failed to send support email:', err);
+    res.status(500).json({ error: 'Не удалось отправить письмо' });
   }
 });
 
