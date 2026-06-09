@@ -458,14 +458,6 @@ export default function App() {
     const orderId = params.get('orderId');
     const payment = params.get('payment');
     if (payment === 'success' && orderId) {
-      // Clean up URL immediately so re-renders don't re-trigger this
-      try {
-        const cleanUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
-        window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
-      } catch (e) {
-        console.error(e);
-      }
-
       const numericOrderId = parseInt(orderId);
 
       const confirmPaymentOnServer = async () => {
@@ -476,36 +468,35 @@ export default function App() {
           });
           if (response.ok) {
             addNotification(`Оплата заказа #${numericOrderId} успешно получена! 🎉`, 'success');
-            // Directly update state to avoid race with other fetchUserOrders calls
             setUserOrders(prev => prev.map(o =>
               o.id === numericOrderId
-                ? { ...o, is_paid: 1, status: o.status === 'pending' ? 'preparing' : o.status }
+                ? { ...o, is_paid: 1, status: (o.status === 'pending' ? 'preparing' : o.status) as Order['status'] }
                 : o
             ));
             setActiveTab('profile');
           } else {
             addNotification('Статус оплаты проверяется...', 'info');
           }
-          // Fetch fresh orders after a brief delay to ensure DB write is complete
-          setTimeout(() => {
-            fetchUserOrders();
-            // Check admin status from localStorage since user closure may be stale
-            try {
-              const savedUser = localStorage.getItem('user');
-              if (savedUser) {
-                const parsed = JSON.parse(savedUser);
-                if (parsed.role === 'admin') fetchOrders();
-              }
-            } catch (e) {}
-          }, 300);
+          fetchUserOrders();
+          if (user && user.role === 'admin') {
+            fetchOrders();
+          }
         } catch (error) {
           console.error('Error confirming payment:', error);
         }
       };
 
       confirmPaymentOnServer();
+
+      // Clean up URL query parameters
+      try {
+        const cleanUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
+        window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
+      } catch (e) {
+        console.error(e);
+      }
     }
-  }, []); // Run once on mount — user is already initialized from localStorage synchronously
+  }, [user]);
 
   useEffect(() => {
     if (!pendingYoomoneyPayment) return;
