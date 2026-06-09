@@ -5,16 +5,16 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  ShoppingBag, 
-  Settings, 
-  Plus, 
-  Minus, 
-  Trash2, 
-  CheckCircle2, 
-  Clock, 
-  ChefHat, 
-  Truck, 
+import {
+  ShoppingBag,
+  Settings,
+  Plus,
+  Minus,
+  Trash2,
+  CheckCircle2,
+  Clock,
+  ChefHat,
+  Truck,
   XCircle,
   Ticket,
   UtensilsCrossed,
@@ -27,7 +27,11 @@ import {
   Pencil,
   MapPin,
   Map,
-  Calendar
+  Calendar,
+  Banknote,
+  QrCode,
+  Zap,
+  X,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -122,8 +126,10 @@ export default function App() {
   const [openedNews, setOpenedNews] = useState<NewsItem | null>(null);
   const [reviewModal, setReviewModal] = useState<{ orderId: number; rating: number; review: string } | null>(null);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'yoomoney'>('cash');
-  const [pendingYoomoneyPayment, setPendingYoomoneyPayment] = useState<{ orderId: number; yoomoneyUrl: string; total: number } | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'platega'>('cash');
+  const [pendingPlategaPayment, setPendingPlategaPayment] = useState<{ orderId: number; redirect: string; total: number } | null>(null);
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  const [showDataPolicy, setShowDataPolicy] = useState(false);
   
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
@@ -467,7 +473,7 @@ export default function App() {
             headers: { 'Content-Type': 'application/json' }
           });
           if (response.ok) {
-            addNotification(`Оплата заказа #${numericOrderId} успешно получена! 🎉`, 'success');
+            addNotification(`Оплата заказа #${numericOrderId} успешно получена!`, 'success');
             setUserOrders(prev => prev.map(o =>
               o.id === numericOrderId
                 ? { ...o, is_paid: 1, status: (o.status === 'pending' ? 'preparing' : o.status) as Order['status'] }
@@ -499,30 +505,30 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    if (!pendingYoomoneyPayment) return;
+    if (!pendingPlategaPayment) return;
 
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch(`/api/orders/${pendingYoomoneyPayment.orderId}/status?t=${Date.now()}`);
+        const res = await fetch(`/api/orders/${pendingPlategaPayment.orderId}/status?t=${Date.now()}`);
         if (res.ok) {
           const data = await res.json();
           if (data.is_paid || data.status !== 'pending') {
-            addNotification(`Оплата заказа #${pendingYoomoneyPayment.orderId} успешно получена! 🎉`, 'success');
+            addNotification(`Оплата заказа #${pendingPlategaPayment.orderId} успешно получена!`, 'success');
             fetchUserOrders();
             if (user && user.role === 'admin') {
               fetchOrders();
             }
-            setPendingYoomoneyPayment(null);
+            setPendingPlategaPayment(null);
             setActiveTab('profile');
           }
         }
       } catch (err) {
         console.error('Error polling order status:', err);
       }
-    }, 2000); // Check status every 2 seconds
+    }, 2000);
 
     return () => clearInterval(intervalId);
-  }, [pendingYoomoneyPayment, user]);
+  }, [pendingPlategaPayment, user]);
 
   useEffect(() => {
     fetchMenu(selectedBranch?.id);
@@ -558,9 +564,9 @@ export default function App() {
         if (prev && prev.status !== order.status) {
           let statusText = '';
           switch(order.status) {
-            case 'preparing': statusText = 'начали готовить! 👨‍🍳'; break;
-            case 'ready': statusText = 'готов к выдаче! 🌯'; break;
-            case 'delivered': statusText = 'доставлен! Приятного аппетита! ❤️'; break;
+            case 'preparing': statusText = 'начали готовить!'; break;
+            case 'ready': statusText = 'готов к выдаче!'; break;
+            case 'delivered': statusText = 'доставлен! Приятного аппетита!'; break;
           }
           if (statusText) addNotification(`Ваш заказ #${order.id} ${statusText}`);
         }
@@ -708,7 +714,7 @@ export default function App() {
       if (res.ok) {
         setUser(data);
         setIsAuthOpen(false);
-        addNotification(authMode === 'login' ? 'С возвращением! 👋' : 'Добро пожаловать! 🎉');
+        addNotification(authMode === 'login' ? 'С возвращением!' : 'Добро пожаловать!');
       } else {
         alert(data.error || 'Ошибка авторизации');
       }
@@ -843,16 +849,16 @@ export default function App() {
         setCart([]);
         setAppliedPromo(null);
         setUseBonuses(false);
-        addNotification('Заказ успешно оформлен! 🎉');
+        addNotification('Заказ успешно оформлен!');
         
-        if (paymentMethod === 'yoomoney' && data.yoomoneyUrl) {
-          setPendingYoomoneyPayment({
+        if (paymentMethod === 'platega' && data.platega_redirect) {
+          setPendingPlategaPayment({
             orderId: data.id,
-            yoomoneyUrl: data.yoomoneyUrl,
+            redirect: data.platega_redirect,
             total: finalTotal
           });
         } else {
-          setActiveTab('profile'); // Switch to profile to see the order
+          setActiveTab('profile');
         }
         
         const userRes = await fetch(`/api/user/${user.id}`);
@@ -1270,21 +1276,21 @@ export default function App() {
                                 : "bg-white/5 border-white/5 text-white/50 hover:border-white/10"
                             )}
                           >
-                            <span>💵 При получении</span>
+                            <span className="flex items-center gap-1.5"><Banknote className="w-4 h-4" /> При получении</span>
                             <span className="text-[8px] opacity-60">Наличные или карта</span>
                           </button>
                           <button
                             type="button"
-                            onClick={() => setPaymentMethod('yoomoney')}
+                            onClick={() => setPaymentMethod('platega')}
                             className={cn(
                               "py-3.5 px-4 rounded-2xl border text-xs font-bold transition-all uppercase tracking-tight flex flex-col items-center gap-1",
-                              paymentMethod === 'yoomoney'
+                              paymentMethod === 'platega'
                                 ? "bg-orange-500/10 border-orange-500 text-orange-500"
                                 : "bg-white/5 border-white/5 text-white/50 hover:border-white/10"
                             )}
                           >
-                            <span>💳 ЮМани онлайн</span>
-                            <span className="text-[8px] opacity-60">Мгновенный платеж</span>
+                            <span className="flex items-center gap-1.5"><QrCode className="w-4 h-4" /> СБП онлайн</span>
+                            <span className="text-[8px] opacity-60">Платёга • QR-код</span>
                           </button>
                         </div>
                       </div>
@@ -1481,53 +1487,39 @@ export default function App() {
                           <div className="flex justify-between items-center pt-2 border-t border-white/5">
                             <span className="text-white/40 text-[10px] font-black uppercase tracking-wider">Тип оплаты</span>
                             <span className="text-xs font-black italic">
-                              {order.payment_method === 'yoomoney' ? (
+                              {order.payment_method === 'platega' ? (
                                 order.is_paid ? (
-                                  <span className="text-green-500 flex items-center gap-1">🟢 Оплачен онлайн (ЮМани)</span>
+                                  <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Оплачен по СБП</span>
                                 ) : (
-                                  <span className="text-yellow-500 flex items-center gap-1 animate-pulse">⏳ Ожидает оплаты (ЮМани)</span>
+                                  <span className="text-yellow-500 flex items-center gap-1 animate-pulse"><Clock className="w-3.5 h-3.5" /> Ожидает оплаты (СБП)</span>
                                 )
                               ) : (
-                                <span className="text-white/60">💵 Наличные / Карта при получении</span>
+                                <span className="text-white/60 flex items-center gap-1"><Banknote className="w-3.5 h-3.5" /> Наличные / Карта при получении</span>
                               )}
                             </span>
                           </div>
 
-                          {order.payment_method === 'yoomoney' && !order.is_paid && order.status !== 'cancelled' && (
-                            <div className="mt-2 bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-2xl text-[10px] space-y-1 font-sans leading-relaxed text-left">
-                              <p className="font-black uppercase tracking-widest text-[9px] text-red-500 flex items-center gap-1">
-                                ⚠️ Перевести не получится?
-                              </p>
-                              <p className="font-semibold text-white/80">
-                                Спросите у получателя (администратора филиала), как ещё можно отправить деньги.
-                              </p>
-                            </div>
-                          )}
-
                           <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
-                            {order.payment_method === 'yoomoney' && !order.is_paid && order.status !== 'cancelled' && (
+                            {order.payment_method === 'platega' && !order.is_paid && order.status !== 'cancelled' && (
                               <button
-                                onClick={() => {
-                                  const receiver = '4100115538965851';
-                                  const targets = `Оплата заказа №${order.id} в Крутая Шаурма`;
-                                  const host = window.location.host || 'localhost:3000';
-                                  const isLocal = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
-                                  const protocol = window.location.protocol;
-                                  const successURL = (isLocal && !host.includes('bezumni13.onrender.com'))
-                                    ? `${protocol}//${host}/?orderId=${order.id}&payment=success`
-                                    : `https://bezumni13.onrender.com/?orderId=${order.id}&payment=success`;
-                                  
-                                  const url = `https://yoomoney.ru/quickpay/confirm.xml?receiver=${receiver}&quickpay-form=shop&targets=${encodeURIComponent(targets)}&paymentType=AC&sum=${order.total_amount}&label=${order.id}&successURL=${encodeURIComponent(successURL)}`;
-                                  
-                                  setPendingYoomoneyPayment({
-                                    orderId: order.id,
-                                    yoomoneyUrl: url,
-                                    total: order.total_amount
-                                  });
+                                onClick={async () => {
+                                  try {
+                                    const linkRes = await fetch(`/api/orders/${order.id}/platega-link`, { method: 'POST' });
+                                    if (linkRes.ok) {
+                                      const linkData = await linkRes.json();
+                                      if (linkData.redirect) {
+                                        setPendingPlategaPayment({ orderId: order.id, redirect: linkData.redirect, total: order.total_amount });
+                                      }
+                                    } else {
+                                      addNotification('Не удалось создать ссылку для оплаты', 'info');
+                                    }
+                                  } catch {
+                                    addNotification('Ошибка подключения', 'info');
+                                  }
                                 }}
                                 className="px-3 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-black text-[10px] font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-1 active:scale-95 shadow-md shadow-orange-500/10"
                               >
-                                💳 Оплатить сейчас
+                                <QrCode className="w-4 h-4" /> Оплатить по СБП
                               </button>
                             )}
                             <button
@@ -2115,7 +2107,7 @@ export default function App() {
         </AnimatePresence>
 
         <AnimatePresence>
-          {pendingYoomoneyPayment && (
+          {pendingPlategaPayment && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
@@ -2128,45 +2120,30 @@ export default function App() {
                     <ShoppingBag className="w-6 h-6" />
                   </div>
                   <h3 className="text-lg font-black uppercase italic text-orange-500">
-                    Оплата заказа #{pendingYoomoneyPayment.orderId}
+                    Оплата заказа #{pendingPlategaPayment.orderId}
                   </h3>
                   <p className="text-2xl font-black text-white italic">
-                    {pendingYoomoneyPayment.total} ₽
+                    {pendingPlategaPayment.total} ₽
                   </p>
                   <p className="text-xs text-white/60 font-medium leading-relaxed font-sans">
-                    Для завершения оформления оплатите заказ с помощью ЮМани (поддерживаются банковские карты). После успешной оплаты статус обновится автоматически.
+                    Для завершения оформления отсканируйте QR-код через приложение вашего банка (СБП). После успешной оплаты статус обновится автоматически.
                   </p>
-                  
-                  <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-2xl text-[11px] font-sans text-left space-y-2 leading-relaxed">
-                    <p className="font-black uppercase tracking-widest text-[9px] text-red-500 flex items-center gap-1">
-                      ⚠️ Перевести не получится?
-                    </p>
-                    <p className="font-semibold text-white/90">
-                      Спросите у получателя (администратора филиала), как ещё можно отправить деньги. Вы можете выполнить перевод напрямую или обсудить другой способ.
-                    </p>
-                    {selectedBranch && (
-                      <div className="pt-2 border-t border-red-500/10 text-[10px] space-y-0.5">
-                        <p className="text-white/40 font-black uppercase">Филиал:</p>
-                        <p className="text-white font-bold">{selectedBranch.name} ({selectedBranch.address})</p>
-                      </div>
-                    )}
-                  </div>
                 </div>
 
                 <div className="space-y-2 pt-2">
                   <a
-                    href={pendingYoomoneyPayment.yoomoneyUrl}
+                    href={pendingPlategaPayment.redirect}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block w-full text-center bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black py-3 rounded-xl text-xs font-black uppercase italic transition-all active:scale-95 shadow-lg shadow-orange-500/20"
                   >
-                    💳 Перейти к оплате ЮМани
+                    <QrCode className="w-4 h-4" /> Оплатить по СБП (Платёга)
                   </a>
 
                   <button
                     onClick={async () => {
                       try {
-                        const response = await fetch(`/api/orders/${pendingYoomoneyPayment.orderId}/simulate-pay`, {
+                        const response = await fetch(`/api/orders/${pendingPlategaPayment.orderId}/simulate-pay`, {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' }
                         });
@@ -2174,7 +2151,7 @@ export default function App() {
                           addNotification('Оплата успешно симулирована!', 'success');
                           fetchUserOrders();
                           fetchOrders();
-                          setPendingYoomoneyPayment(null);
+                          setPendingPlategaPayment(null);
                           setActiveTab('profile');
                         } else {
                           addNotification('Ошибка симуляции оплаты', 'info');
@@ -2185,15 +2162,151 @@ export default function App() {
                     }}
                     className="w-full bg-[#18181b] hover:bg-zinc-800 border border-orange-500/20 text-orange-400 hover:text-orange-300 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-1.5"
                   >
-                    🚀 Симулировать успешную оплату (Dev)
+                    <Zap className="w-3.5 h-3.5" /> Симулировать оплату (Dev)
                   </button>
 
                   <button
-                    onClick={() => setPendingYoomoneyPayment(null)}
+                    onClick={() => setPendingPlategaPayment(null)}
                     className="w-full bg-white/5 border border-white/10 hover:bg-white/10 py-3 rounded-xl text-xs font-black uppercase italic transition-all active:scale-95 text-white/60 hover:text-white font-bold"
                   >
                     Закрыть окно
                   </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Footer */}
+        <footer className="w-full border-t border-white/5 py-4 px-4 text-center text-[10px] text-white/30 font-sans space-x-3">
+          <button
+            onClick={() => setShowPrivacyPolicy(true)}
+            className="hover:text-white/60 transition-colors underline underline-offset-2"
+          >
+            Политика конфиденциальности
+          </button>
+          <span>·</span>
+          <button
+            onClick={() => setShowDataPolicy(true)}
+            className="hover:text-white/60 transition-colors underline underline-offset-2"
+          >
+            Политика обработки данных
+          </button>
+        </footer>
+
+        {/* Privacy Policy Modal */}
+        <AnimatePresence>
+          {showPrivacyPolicy && (
+            <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[300] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-zinc-950 border border-white/10 rounded-[24px] w-full max-w-lg max-h-[80vh] flex flex-col"
+              >
+                <div className="flex items-center justify-between p-6 border-b border-white/10">
+                  <h2 className="text-sm font-black uppercase italic text-orange-500">Политика конфиденциальности</h2>
+                  <button onClick={() => setShowPrivacyPolicy(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+                </div>
+                <div className="overflow-y-auto p-6 text-[11px] text-white/70 font-sans leading-relaxed space-y-4">
+                  <p className="text-white/40 text-[10px]">Дата вступления в силу: 09.06.2026</p>
+                  <p>Настоящая Политика конфиденциальности (далее — «Политика») описывает, как приложение «Безумно Крутая Шаурма» (далее — «Приложение», «мы») собирает, использует и защищает персональные данные пользователей.</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">1. Какие данные мы собираем</h3>
+                  <p>При регистрации и использовании Приложения мы можем собирать следующие данные:</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Имя и фамилия</li>
+                    <li>Номер телефона</li>
+                    <li>Адрес электронной почты</li>
+                    <li>История заказов (состав, сумма, дата, филиал)</li>
+                    <li>Данные платёжных транзакций (идентификатор транзакции, статус оплаты — без данных карты)</li>
+                  </ul>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">2. Цели использования данных</h3>
+                  <p>Собранные данные используются исключительно для:</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Оформления и доставки заказов</li>
+                    <li>Начисления и списания бонусных баллов</li>
+                    <li>Обратной связи и поддержки пользователей</li>
+                    <li>Обработки платежей через сервис Платёга (СБП)</li>
+                    <li>Улучшения качества сервиса</li>
+                  </ul>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">3. Передача данных третьим лицам</h3>
+                  <p>Мы не продаём и не передаём ваши персональные данные третьим лицам, за исключением случаев, необходимых для исполнения заказа (платёжный сервис Платёга) или требований законодательства Российской Федерации.</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">4. Хранение данных</h3>
+                  <p>Данные хранятся на защищённых серверах. Срок хранения персональных данных — не более 5 лет с момента последнего использования Приложения, если иное не предусмотрено законодательством.</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">5. Права пользователя</h3>
+                  <p>В соответствии с Федеральным законом № 152-ФЗ «О персональных данных» вы вправе:</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Получить информацию об обрабатываемых персональных данных</li>
+                    <li>Потребовать исправления неточных данных</li>
+                    <li>Потребовать удаления данных</li>
+                    <li>Отозвать согласие на обработку персональных данных</li>
+                  </ul>
+                  <p>Для реализации прав обратитесь к нам по контактам, указанным в Приложении.</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">6. Изменения политики</h3>
+                  <p>Мы оставляем за собой право изменять настоящую Политику. Актуальная версия всегда доступна в Приложении.</p>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Data Processing Policy Modal */}
+        <AnimatePresence>
+          {showDataPolicy && (
+            <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[300] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-zinc-950 border border-white/10 rounded-[24px] w-full max-w-lg max-h-[80vh] flex flex-col"
+              >
+                <div className="flex items-center justify-between p-6 border-b border-white/10">
+                  <h2 className="text-sm font-black uppercase italic text-orange-500">Политика обработки персональных данных</h2>
+                  <button onClick={() => setShowDataPolicy(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+                </div>
+                <div className="overflow-y-auto p-6 text-[11px] text-white/70 font-sans leading-relaxed space-y-4">
+                  <p className="text-white/40 text-[10px]">Дата вступления в силу: 09.06.2026</p>
+                  <p>Настоящая Политика обработки персональных данных (далее — «Политика») разработана в соответствии с требованиями Федерального закона от 27.07.2006 № 152-ФЗ «О персональных данных» и определяет порядок обработки персональных данных пользователей приложения «Безумно Крутая Шаурма».</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">1. Оператор персональных данных</h3>
+                  <p>Оператором персональных данных является владелец приложения «Безумно Крутая Шаурма». Контактные данные оператора размещены в разделе «Контакты» Приложения.</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">2. Категории субъектов и перечень данных</h3>
+                  <p>Обрабатываются данные физических лиц — пользователей Приложения. Перечень обрабатываемых данных:</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Фамилия, имя</li>
+                    <li>Номер телефона</li>
+                    <li>Адрес электронной почты</li>
+                    <li>Данные об оформленных заказах</li>
+                    <li>Технические данные устройства (в обезличенном виде)</li>
+                  </ul>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">3. Правовые основания обработки</h3>
+                  <p>Обработка персональных данных осуществляется на основании:</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Согласия субъекта персональных данных (ст. 6 ч. 1 п. 1 ФЗ-152)</li>
+                    <li>Исполнения договора, стороной которого является субъект (ст. 6 ч. 1 п. 5 ФЗ-152)</li>
+                  </ul>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">4. Цели обработки</h3>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Идентификация пользователя в Приложении</li>
+                    <li>Обработка и исполнение заказов</li>
+                    <li>Расчёт и начисление бонусных баллов</li>
+                    <li>Проведение платёжных операций через СБП (Платёга)</li>
+                    <li>Направление уведомлений о статусе заказа</li>
+                    <li>Улучшение функциональности Приложения</li>
+                  </ul>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">5. Способы обработки</h3>
+                  <p>Обработка персональных данных осуществляется автоматизированным способом с использованием средств вычислительной техники. Передача данных по сети осуществляется по защищённому протоколу HTTPS.</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">6. Хранение и уничтожение данных</h3>
+                  <p>Персональные данные хранятся не дольше, чем этого требуют цели обработки. После достижения целей обработки или по истечении установленных сроков данные подлежат уничтожению или обезличиванию. Срок хранения — не более 5 лет.</p>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">7. Права субъекта персональных данных</h3>
+                  <p>Субъект персональных данных имеет право:</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li>Получать информацию об обработке своих данных</li>
+                    <li>Требовать уточнения, блокирования или уничтожения данных</li>
+                    <li>Отозвать согласие на обработку данных</li>
+                    <li>Обжаловать действия оператора в уполномоченном органе (Роскомнадзор)</li>
+                  </ul>
+                  <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">8. Меры защиты данных</h3>
+                  <p>Оператор принимает необходимые технические и организационные меры для защиты персональных данных от несанкционированного доступа, изменения, раскрытия или уничтожения.</p>
                 </div>
               </motion.div>
             </div>
@@ -3156,11 +3269,11 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                     onChange={(e) => updateStatus(order.id, e.target.value)}
                     className="bg-zinc-800 text-[10px] font-black uppercase outline-none w-full text-white cursor-pointer appearance-none selection:bg-orange-500 pr-6"
                   >
-                    <option value="pending" className="bg-zinc-900 border-none">🕐 Ожидает</option>
-                    <option value="preparing" className="bg-zinc-900 border-none">👨‍🍳 Готовится</option>
-                    <option value="ready" className="bg-zinc-900 border-none">🌯 Готов</option>
-                    <option value="delivered" className="bg-zinc-900 border-none">🚚 Доставлен</option>
-                    <option value="cancelled" className="bg-zinc-900 border-none">❌ Отменен</option>
+                    <option value="pending" className="bg-zinc-900 border-none">Ожидает</option>
+                    <option value="preparing" className="bg-zinc-900 border-none">Готовится</option>
+                    <option value="ready" className="bg-zinc-900 border-none">Готов</option>
+                    <option value="delivered" className="bg-zinc-900 border-none">Доставлен</option>
+                    <option value="cancelled" className="bg-zinc-900 border-none">Отменен</option>
                   </select>
                   <div className="absolute right-3 pointer-events-none opacity-40">
                     <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
