@@ -1643,7 +1643,7 @@ export default function App() {
                             <span className="text-xs font-black italic">
                               {order.payment_method === 'yukassa' ? (
                                 order.is_paid ? (
-                                  <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Оплачен по СБП</span>
+                                  <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Оплачен онлайн</span>
                                 ) : (
                                   <span className="text-yellow-500 flex items-center gap-1 animate-pulse"><Clock className="w-3.5 h-3.5" /> Ожидает оплаты</span>
                                 )
@@ -2549,8 +2549,15 @@ export default function App() {
                           'location=yes,hardwareback=yes,toolbarcolor=#0a0a0a,closebuttoncolor=#ff6b00,closebuttoncaption=Закрыть,navigationbuttoncolor=#ff6b00'
                         );
                         ref.addEventListener('loadstart', (e: any) => {
-                          if (e.url && (e.url.includes('payment=success') || e.url.includes('безумнокрутаяшаурма'))) {
+                          const u = e.url || '';
+                          // Return to app when payment done
+                          if (u.includes('payment=success') || u.includes('безумнокрутаяшаурма')) {
                             ref.close();
+                            return;
+                          }
+                          // Forward bank deep links (SBP intents) to Android system
+                          if (u && !u.startsWith('http://') && !u.startsWith('https://')) {
+                            cordova.InAppBrowser.open(u, '_system', '');
                           }
                         });
                       } else {
