@@ -1128,7 +1128,7 @@ app.post('/api/orders', async (req, res) => {
       const secretKey = process.env.YUKASSA_SECRET_KEY;
       if (shopId && secretKey) {
         try {
-          const returnUrl = `https://безумнокрутаяшаурма.рф/?yukassa_return=1`;
+          const returnUrl = `https://безумнокрутаяшаурма.рф/payment-done`;
 
           const ykRes = await fetch('https://api.yookassa.ru/v3/payments', {
             method: 'POST',
@@ -1866,6 +1866,12 @@ async function startServer() {
         }
       }
     }));
+
+    // Payment return page (simple, no React app — avoids auth side-effects in browser)
+    app.get('/payment-done', (_req, res) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Оплата</title><style>body{background:#0a0a0a;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:20px}.ok{font-size:64px;margin-bottom:16px}h1{color:#f97316;font-size:22px;font-weight:900;text-transform:uppercase;margin:0 0 12px}p{color:rgba(255,255,255,0.5);font-size:14px;margin:0}</style></head><body><div><div class="ok">✓</div><h1>Оплата получена</h1><p>Вернитесь в приложение БКШ</p></div></body></html>`);
+    });
 
     // SPA fallback: serve index.html for any non-file requests
     app.get('*', (req, res) => {
