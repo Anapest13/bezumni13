@@ -2544,9 +2544,22 @@ export default function App() {
                       const url = pendingYukassaPayment.redirect;
                       const cordova = (window as any).cordova;
                       if (cordova?.InAppBrowser) {
-                        // Open in system browser: handles SBP deep links natively,
-                        // app stays in background and polling detects payment automatically
-                        cordova.InAppBrowser.open(url, '_system', '');
+                        const iabRef = cordova.InAppBrowser.open(
+                          url, '_blank',
+                          'location=no,zoom=no,hardwareback=yes,clearcache=no,clearsessioncache=no'
+                        );
+                        iabRef.addEventListener('loadstart', (event: any) => {
+                          const loadUrl: string = event.url || '';
+                          // Forward bank deep links (SBP) to Android intent system
+                          if (!loadUrl.startsWith('http://') && !loadUrl.startsWith('https://')) {
+                            cordova.InAppBrowser.open(loadUrl, '_system', '');
+                            return;
+                          }
+                          // Close InAppBrowser when YuKassa redirects back to our app
+                          if (loadUrl.includes('yukassa_return=1')) {
+                            iabRef.close();
+                          }
+                        });
                       } else {
                         window.open(url, '_blank');
                       }

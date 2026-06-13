@@ -1128,10 +1128,7 @@ app.post('/api/orders', async (req, res) => {
       const secretKey = process.env.YUKASSA_SECRET_KEY;
       if (shopId && secretKey) {
         try {
-          const host = req.get('host') || 'localhost:3000';
-          const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
-          const protocol = isHttps ? 'https' : 'http';
-          const returnUrl = `${protocol}://${host}/?orderId=${orderId}&payment=success`;
+          const returnUrl = `https://безумнокрутаяшаурма.рф/?yukassa_return=1`;
 
           const ykRes = await fetch('https://api.yookassa.ru/v3/payments', {
             method: 'POST',
