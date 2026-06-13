@@ -185,8 +185,8 @@ export default function App() {
   const [openedNews, setOpenedNews] = useState<NewsItem | null>(null);
   const [reviewModal, setReviewModal] = useState<{ orderId: number; rating: number; review: string } | null>(null);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'platega'>('cash');
-  const [pendingPlategaPayment, setPendingPlategaPayment] = useState<{ orderId: number; redirect: string; total: number } | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'yukassa'>('cash');
+  const [pendingYukassaPayment, setPendingYukassaPayment] = useState<{ orderId: number; redirect: string; total: number } | null>(null);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
   const [showDataPolicy, setShowDataPolicy] = useState(false);
   const [showSupportModal, setShowSupportModal] = useState(false);
@@ -199,6 +199,16 @@ export default function App() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
+
+  const [installPromptEvent, setInstallPromptEvent] = useState<any>(null);
+
+  // Pull-to-refresh
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pullStartY = useRef(0);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [isIos, setIsIos] = useState(false);
 
   const confirmAction = (title: string, message: string, onConfirm: () => void) => {
     setConfirmModal({
@@ -523,6 +533,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as any).standalone === true;
+    if (isStandalone) return;
+
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    setIsIos(ios);
+
+    const dismissed = localStorage.getItem('pwa_install_dismissed');
+    if (dismissed) return;
+
+    if (ios) {
+      const t = setTimeout(() => setShowInstallBanner(true), 4000);
+      return () => clearTimeout(t);
+    }
+
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPromptEvent(e);
+      const t = setTimeout(() => setShowInstallBanner(true), 4000);
+      return () => clearTimeout(t);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const orderId = params.get('orderId');
     const payment = params.get('payment');
@@ -568,20 +604,20 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    if (!pendingPlategaPayment) return;
+    if (!pendingYukassaPayment) return;
 
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch(`/api/orders/${pendingPlategaPayment.orderId}/status?t=${Date.now()}`);
+        const res = await fetch(`/api/orders/${pendingYukassaPayment.orderId}/status?t=${Date.now()}`);
         if (res.ok) {
           const data = await res.json();
           if (data.is_paid || data.status !== 'pending') {
-            addNotification(`Оплата заказа #${pendingPlategaPayment.orderId} успешно получена!`, 'success');
+            addNotification(`Оплата заказа #${pendingYukassaPayment.orderId} успешно получена!`, 'success');
             fetchUserOrders();
             if (user && user.role === 'admin') {
               fetchOrders();
             }
-            setPendingPlategaPayment(null);
+            setPendingYukassaPayment(null);
             setActiveTab('profile');
           }
         }
@@ -591,7 +627,7 @@ export default function App() {
     }, 2000);
 
     return () => clearInterval(intervalId);
-  }, [pendingPlategaPayment, user]);
+  }, [pendingYukassaPayment, user]);
 
   useEffect(() => {
     fetchMenu(selectedBranch?.id);
@@ -610,7 +646,7 @@ export default function App() {
         if (user.role === 'admin') {
           fetchOrders();
         }
-      }, 10000);
+      }, 5000);
     }
 
     return () => {
@@ -629,7 +665,7 @@ export default function App() {
           switch(order.status) {
             case 'preparing': statusText = 'начали готовить!'; break;
             case 'ready': statusText = 'готов к выдаче!'; break;
-            case 'delivered': statusText = 'доставлен! Приятного аппетита!'; break;
+            case 'delivered': statusText = 'выдан! Приятного аппетита!'; break;
           }
           if (statusText) addNotification(`Ваш заказ #${order.id} ${statusText}`);
         }
@@ -676,31 +712,6 @@ export default function App() {
     } catch (err) {
       console.error('Failed to fetch user orders');
     }
-  };
-
-  const handleDeleteOrderUser = (orderId: number) => {
-    confirmAction(
-      'Удаление заказа',
-      'Вы уверены, что хотите удалить этот заказ из своей истории?',
-      async () => {
-        try {
-          const res = await fetch(`/api/orders/${orderId}`, {
-            method: 'DELETE'
-          });
-          if (res.ok) {
-            addNotification('Заказ успешно удален из истории!', 'success');
-            fetchUserOrders();
-            // Also update any orders tab if open
-            fetchOrders();
-          } else {
-            addNotification('Не удалось удалить заказ', 'info');
-          }
-        } catch (err) {
-          console.error(err);
-          addNotification('Ошибка при удалении заказа', 'info');
-        }
-      }
-    );
   };
 
   const handleDeleteReviewUser = (orderId: number) => {
@@ -764,6 +775,42 @@ export default function App() {
     }
   };
 
+  const doRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    await Promise.all([
+      fetchMenu(selectedBranch?.id),
+      fetchNews(selectedBranch?.id),
+      user ? fetchUserOrders() : Promise.resolve(),
+    ]);
+    setIsRefreshing(false);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const el = scrollContainerRef.current;
+    if (el && el.scrollTop === 0) {
+      pullStartY.current = e.touches[0].clientY;
+    } else {
+      pullStartY.current = 0;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!pullStartY.current) return;
+    const dist = Math.max(0, e.touches[0].clientY - pullStartY.current);
+    if (dist > 0 && scrollContainerRef.current?.scrollTop === 0) {
+      setPullDistance(Math.min(dist, 80));
+    }
+  };
+
+  const handleTouchEnd = async () => {
+    if (pullDistance >= 60) {
+      await doRefresh();
+    }
+    setPullDistance(0);
+    pullStartY.current = 0;
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
@@ -818,12 +865,12 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (subtotal < (data.min_order_amount || 0)) {
-          alert(`Этот промокод действует при заказе от ${data.min_order_amount} ₽`);
+          addNotification(`Этот промокод действует при заказе от ${data.min_order_amount} ₽`, 'info');
         }
         setAppliedPromo(data);
       } else {
         const errData = await res.json().catch(() => ({}));
-        alert(errData.error || 'Промокод не найден или не предназначен для этого филиала');
+        addNotification(errData.error || 'Промокод не найден или не предназначен для этого филиала', 'info');
       }
     } catch (err) {
       console.error(err);
@@ -937,10 +984,10 @@ export default function App() {
         setUseBonuses(false);
         addNotification('Заказ успешно оформлен!');
         
-        if (paymentMethod === 'platega' && data.platega_redirect) {
-          setPendingPlategaPayment({
+        if (paymentMethod === 'yukassa' && data.payment_redirect) {
+          setPendingYukassaPayment({
             orderId: data.id,
-            redirect: data.platega_redirect,
+            redirect: data.payment_redirect,
             total: finalTotal
           });
         } else {
@@ -1057,7 +1104,22 @@ export default function App() {
         </header>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto pb-32 px-6">
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto pb-32 px-6"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {/* Pull-to-refresh indicator */}
+          {(pullDistance > 0 || isRefreshing) && (
+            <div
+              className="flex items-center justify-center text-orange-500 text-xs font-black uppercase tracking-widest overflow-hidden transition-all"
+              style={{ height: isRefreshing ? 36 : pullDistance * 0.45 }}
+            >
+              {isRefreshing ? '↻ Обновление...' : pullDistance >= 60 ? '↑ Отпустите' : '↓ Потяните'}
+            </div>
+          )}
           <AnimatePresence mode="wait">
             {activeTab === 'home' && (
               selectedBranch && isBranchClosed(selectedBranch) ? (
@@ -1367,16 +1429,16 @@ export default function App() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => setPaymentMethod('platega')}
+                            onClick={() => setPaymentMethod('yukassa')}
                             className={cn(
                               "py-3.5 px-4 rounded-2xl border text-xs font-bold transition-all uppercase tracking-tight flex flex-col items-center gap-1",
-                              paymentMethod === 'platega'
+                              paymentMethod === 'yukassa'
                                 ? "bg-orange-500/10 border-orange-500 text-orange-500"
                                 : "bg-white/5 border-white/5 text-white/50 hover:border-white/10"
                             )}
                           >
-                            <span className="flex items-center gap-1.5"><QrCode className="w-4 h-4" /> СБП онлайн</span>
-                            <span className="text-[8px] opacity-60">Платёга • QR-код</span>
+                            <span className="flex items-center gap-1.5"><QrCode className="w-4 h-4" /> Онлайн</span>
+                            <span className="text-[8px] opacity-60">ЮКасса • СБП/Карта</span>
                           </button>
                         </div>
                       </div>
@@ -1485,7 +1547,7 @@ export default function App() {
                               {order.status === 'pending' && 'Ожидает'}
                               {order.status === 'preparing' && 'Готовится'}
                               {order.status === 'ready' && 'Готов'}
-                              {order.status === 'delivered' && 'Доставлен'}
+                              {order.status === 'delivered' && 'Выдан'}
                               {order.status === 'cancelled' && 'Отменен'}
                             </div>
                           </div>
@@ -1498,7 +1560,7 @@ export default function App() {
                                   { s: 'pending', i: <Clock className="w-3 h-3" />, l: 'Принят' },
                                   { s: 'preparing', i: <ChefHat className="w-3 h-3" />, l: 'Готовим' },
                                   { s: 'ready', i: <CheckCircle2 className="w-3 h-3" />, l: 'Готов' },
-                                  { s: 'delivered', i: <Truck className="w-3 h-3" />, l: 'В пути' }
+                                  { s: 'delivered', i: <Truck className="w-3 h-3" />, l: 'Выдан' }
                                 ].map((step, idx) => {
                                   const statuses = ['pending', 'preparing', 'ready', 'delivered'];
                                   const currentIdx = statuses.indexOf(order.status);
@@ -1579,11 +1641,11 @@ export default function App() {
                           <div className="flex justify-between items-center pt-2 border-t border-white/5">
                             <span className="text-white/40 text-[10px] font-black uppercase tracking-wider">Тип оплаты</span>
                             <span className="text-xs font-black italic">
-                              {order.payment_method === 'platega' ? (
+                              {order.payment_method === 'yukassa' ? (
                                 order.is_paid ? (
                                   <span className="text-green-500 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Оплачен по СБП</span>
                                 ) : (
-                                  <span className="text-yellow-500 flex items-center gap-1 animate-pulse"><Clock className="w-3.5 h-3.5" /> Ожидает оплаты (СБП)</span>
+                                  <span className="text-yellow-500 flex items-center gap-1 animate-pulse"><Clock className="w-3.5 h-3.5" /> Ожидает оплаты</span>
                                 )
                               ) : (
                                 <span className="text-white/60 flex items-center gap-1"><Banknote className="w-3.5 h-3.5" /> Наличные / Карта при получении</span>
@@ -1592,15 +1654,15 @@ export default function App() {
                           </div>
 
                           <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
-                            {order.payment_method === 'platega' && !order.is_paid && order.status !== 'cancelled' && (
+                            {order.payment_method === 'yukassa' && !order.is_paid && order.status !== 'cancelled' && (
                               <button
                                 onClick={async () => {
                                   try {
-                                    const linkRes = await fetch(`/api/orders/${order.id}/platega-link`, { method: 'POST' });
+                                    const linkRes = await fetch(`/api/orders/${order.id}/yukassa-link`, { method: 'POST' });
                                     if (linkRes.ok) {
                                       const linkData = await linkRes.json();
                                       if (linkData.redirect) {
-                                        setPendingPlategaPayment({ orderId: order.id, redirect: linkData.redirect, total: order.total_amount });
+                                        setPendingYukassaPayment({ orderId: order.id, redirect: linkData.redirect, total: order.total_amount });
                                       }
                                     } else {
                                       addNotification('Не удалось создать ссылку для оплаты', 'info');
@@ -1611,17 +1673,9 @@ export default function App() {
                                 }}
                                 className="px-3 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-black text-[10px] font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-1 active:scale-95 shadow-md shadow-orange-500/10"
                               >
-                                <QrCode className="w-4 h-4" /> Оплатить по СБП
+                                <QrCode className="w-4 h-4" /> Оплатить онлайн
                               </button>
                             )}
-                            <button
-                              onClick={() => handleDeleteOrderUser(order.id)}
-                              className="p-2 bg-red-500/10 hover:bg-red-500 hover:text-black text-red-500 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all flex items-center gap-1 active:scale-95 border border-red-500/10"
-                              title="Удалить заказ из истории"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Удалить заказ</span>
-                            </button>
                             {order.rating && (
                               <button
                                 onClick={() => handleDeleteReviewUser(order.id)}
@@ -1729,7 +1783,25 @@ export default function App() {
                     >
                       {authLoading ? 'Проверка...' : 'Подтвердить'}
                     </button>
-                    <button onClick={() => { setAuthStep('form'); setVerifyCode(''); setAuthError(''); }} className="w-full text-white/40 text-xs font-bold uppercase tracking-widest">
+                    <button
+                      onClick={async () => {
+                        setAuthLoading(true); setAuthError('');
+                        try {
+                          const res = await fetch('/api/auth/resend-code', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: verifyEmail, type: 'verify' }),
+                          });
+                          if (res.ok) { setAuthError(''); addNotification('Код отправлен повторно', 'info'); }
+                          else { const d = await res.json(); setAuthError(d.error || 'Ошибка'); }
+                        } catch { setAuthError('Сетевая ошибка'); }
+                        finally { setAuthLoading(false); }
+                      }}
+                      className="w-full text-orange-500/50 text-xs font-bold uppercase tracking-widest hover:text-orange-500 transition-colors"
+                    >
+                      Отправить код повторно
+                    </button>
+                    <button onClick={() => { setAuthStep('form'); setVerifyCode(''); setAuthError(''); }} className="w-full text-white/30 text-xs font-bold uppercase tracking-widest">
                       Назад
                     </button>
                   </div>
@@ -2071,6 +2143,61 @@ export default function App() {
           )}
         </nav>
 
+        {/* PWA Install Banner */}
+        <AnimatePresence>
+          {showInstallBanner && (
+            <motion.div
+              initial={{ y: 120, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 120, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+              className="fixed bottom-24 left-0 right-0 z-[120] px-4"
+            >
+              <div className="bg-zinc-900 border border-orange-500/30 rounded-3xl p-4 shadow-2xl shadow-orange-500/10 flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-orange-500 flex items-center justify-center shrink-0">
+                  <img src="/icon.webp" alt="" className="w-10 h-10 rounded-xl object-cover" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-black text-sm uppercase italic text-white">Добавить на экран</p>
+                  {isIos ? (
+                    <p className="text-white/40 text-[10px] leading-tight mt-0.5">
+                      Нажмите <span className="text-orange-400 font-bold">↑ Поделиться</span> → «На экран «Домой»»
+                    </p>
+                  ) : (
+                    <p className="text-white/40 text-[10px] leading-tight mt-0.5">
+                      Установи как приложение — без браузера
+                    </p>
+                  )}
+                </div>
+                {!isIos && (
+                  <button
+                    onClick={async () => {
+                      if (installPromptEvent) {
+                        installPromptEvent.prompt();
+                        const { outcome } = await installPromptEvent.userChoice;
+                        if (outcome === 'accepted') localStorage.setItem('pwa_install_dismissed', '1');
+                      }
+                      setShowInstallBanner(false);
+                    }}
+                    className="bg-orange-500 text-black font-black text-[10px] uppercase rounded-xl px-3 py-2 shrink-0"
+                  >
+                    Установить
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setShowInstallBanner(false);
+                    localStorage.setItem('pwa_install_dismissed', '1');
+                  }}
+                  className="text-white/30 hover:text-white/60 shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Notifications */}
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[110] w-full max-w-[400px] px-6 pointer-events-none">
           <AnimatePresence>
@@ -2388,7 +2515,7 @@ export default function App() {
         </AnimatePresence>
 
         <AnimatePresence>
-          {pendingPlategaPayment && (
+          {pendingYukassaPayment && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[200] flex items-center justify-center p-4">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
@@ -2401,53 +2528,28 @@ export default function App() {
                     <ShoppingBag className="w-6 h-6" />
                   </div>
                   <h3 className="text-lg font-black uppercase italic text-orange-500">
-                    Оплата заказа #{pendingPlategaPayment.orderId}
+                    Оплата заказа #{pendingYukassaPayment.orderId}
                   </h3>
                   <p className="text-2xl font-black text-white italic">
-                    {pendingPlategaPayment.total} ₽
+                    {pendingYukassaPayment.total} ₽
                   </p>
                   <p className="text-xs text-white/60 font-medium leading-relaxed font-sans">
-                    Для завершения оформления отсканируйте QR-код через приложение вашего банка (СБП). После успешной оплаты статус обновится автоматически.
+                    Оплатите заказ картой или через СБП. После успешной оплаты статус обновится автоматически.
                   </p>
                 </div>
 
                 <div className="space-y-2 pt-2">
                   <a
-                    href={pendingPlategaPayment.redirect}
+                    href={pendingYukassaPayment.redirect}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block w-full text-center bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black py-3 rounded-xl text-xs font-black uppercase italic transition-all active:scale-95 shadow-lg shadow-orange-500/20"
+                    className="block w-full text-center bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black py-3 rounded-xl text-xs font-black uppercase italic transition-all active:scale-95 shadow-lg shadow-orange-500/20 flex items-center justify-center gap-1.5"
                   >
-                    <QrCode className="w-4 h-4" /> Оплатить по СБП (Платёга)
+                    <QrCode className="w-4 h-4" /> Оплатить через ЮКассу
                   </a>
 
                   <button
-                    onClick={async () => {
-                      try {
-                        const response = await fetch(`/api/orders/${pendingPlategaPayment.orderId}/simulate-pay`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' }
-                        });
-                        if (response.ok) {
-                          addNotification('Оплата успешно симулирована!', 'success');
-                          fetchUserOrders();
-                          fetchOrders();
-                          setPendingPlategaPayment(null);
-                          setActiveTab('profile');
-                        } else {
-                          addNotification('Ошибка симуляции оплаты', 'info');
-                        }
-                      } catch (error) {
-                        addNotification('Ошибка подключения к серверу', 'info');
-                      }
-                    }}
-                    className="w-full bg-[#18181b] hover:bg-zinc-800 border border-orange-500/20 text-orange-400 hover:text-orange-300 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-1.5"
-                  >
-                    <Zap className="w-3.5 h-3.5" /> Симулировать оплату (Dev)
-                  </button>
-
-                  <button
-                    onClick={() => setPendingPlategaPayment(null)}
+                    onClick={() => setPendingYukassaPayment(null)}
                     className="w-full bg-white/5 border border-white/10 hover:bg-white/10 py-3 rounded-xl text-xs font-black uppercase italic transition-all active:scale-95 text-white/60 hover:text-white font-bold"
                   >
                     Закрыть окно
@@ -2459,20 +2561,28 @@ export default function App() {
         </AnimatePresence>
 
         {/* Footer */}
-        <footer className="w-full border-t border-white/5 py-4 px-4 text-center text-[10px] text-white/30 font-sans space-x-3">
-          <button
-            onClick={() => setShowPrivacyPolicy(true)}
-            className="hover:text-white/60 transition-colors underline underline-offset-2"
-          >
-            Политика конфиденциальности
-          </button>
-          <span>·</span>
-          <button
-            onClick={() => setShowDataPolicy(true)}
-            className="hover:text-white/60 transition-colors underline underline-offset-2"
-          >
-            Политика обработки данных
-          </button>
+        <footer className="w-full border-t border-white/5 py-4 px-4 text-center text-[10px] text-white/30 font-sans space-y-1.5">
+          <div className="space-x-3">
+            <button
+              onClick={() => setShowPrivacyPolicy(true)}
+              className="hover:text-white/60 transition-colors underline underline-offset-2"
+            >
+              Политика конфиденциальности
+            </button>
+            <span>·</span>
+            <button
+              onClick={() => setShowDataPolicy(true)}
+              className="hover:text-white/60 transition-colors underline underline-offset-2"
+            >
+              Политика обработки данных
+            </button>
+          </div>
+          <div className="text-white/20 text-[9px] font-mono tracking-wider">
+            Самозанятый · ИНН 240103098246
+          </div>
+          <div className="text-white/15 text-[8px] font-mono tracking-widest uppercase">
+            Дипломный проект · не используется в коммерческих целях
+          </div>
         </footer>
 
         {/* Support Modal */}
@@ -2634,11 +2744,11 @@ export default function App() {
                     <li>Оформления и доставки заказов</li>
                     <li>Начисления и списания бонусных баллов</li>
                     <li>Обратной связи и поддержки пользователей</li>
-                    <li>Обработки платежей через сервис Платёга (СБП)</li>
+                    <li>Обработки платежей через сервис ЮКасса (СБП)</li>
                     <li>Улучшения качества сервиса</li>
                   </ul>
                   <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">3. Передача данных третьим лицам</h3>
-                  <p>Мы не продаём и не передаём ваши персональные данные третьим лицам, за исключением случаев, необходимых для исполнения заказа (платёжный сервис Платёга) или требований законодательства Российской Федерации.</p>
+                  <p>Мы не продаём и не передаём ваши персональные данные третьим лицам, за исключением случаев, необходимых для исполнения заказа (платёжный сервис ЮКасса) или требований законодательства Российской Федерации.</p>
                   <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">4. Хранение данных</h3>
                   <p>Данные хранятся на защищённых серверах. Срок хранения персональных данных — не более 5 лет с момента последнего использования Приложения, если иное не предусмотрено законодательством.</p>
                   <h3 className="text-white/90 font-black uppercase text-[10px] tracking-wider pt-2">5. Права пользователя</h3>
@@ -2697,7 +2807,7 @@ export default function App() {
                     <li>Идентификация пользователя в Приложении</li>
                     <li>Обработка и исполнение заказов</li>
                     <li>Расчёт и начисление бонусных баллов</li>
-                    <li>Проведение платёжных операций через СБП (Платёга)</li>
+                    <li>Проведение платёжных операций через СБП (ЮКасса)</li>
                     <li>Направление уведомлений о статусе заказа</li>
                     <li>Улучшение функциональности Приложения</li>
                   </ul>
@@ -2760,8 +2870,14 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
   onUpdateBranches?: () => void,
   addNotification?: (msg: string, type?: 'success' | 'info') => void
 }) {
-  const [adminTab, setAdminTab] = useState<'orders' | 'menu' | 'reviews' | 'news' | 'branches' | 'stock'>('orders');
+  const notify = (msg: string, type: 'success' | 'info' = 'success') => {
+    if (addNotification) addNotification(msg, type);
+  };
+
+  const [adminTab, setAdminTab] = useState<'orders' | 'menu' | 'reviews' | 'news' | 'branches' | 'stock' | 'users'>('orders');
   const [adminBranchFilter, setAdminBranchFilter] = useState<string>('all');
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [adminUsersSearch, setAdminUsersSearch] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<number | null>(null);
   const [orderDetails, setOrderDetails] = useState<any[]>([]);
   const [reviewStats, setReviewStats] = useState<{ avg_day: number; avg_week: number; avg_month: number; total_reviews: number } | null>(null);
@@ -2773,7 +2889,6 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
   const [isAddingBranch, setIsAddingBranch] = useState(false);
   const [newBranch, setNewBranch] = useState({ name: '', address: '', is_24_7: true, latitude: '56.0153', longitude: '92.8932', city_id: '' });
   const [editingBranch, setEditingBranch] = useState<any | null>(null);
-  const [stockBranchFilter, setStockBranchFilter] = useState<string>('all');
   const [adminSelectedCityId, setAdminSelectedCityId] = useState<number | null>(null);
 
   const handleDeleteCity = (cityId: number) => {
@@ -2797,32 +2912,18 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
             method: 'DELETE'
           });
           if (res.ok) {
-            if (addNotification) {
-              addNotification(`Город «${city.name}» успешно удален!`, 'success');
-            } else {
-              alert(`Город «${city.name}» успешно удален!`);
-            }
-            // Refresh cities and branches in admin view
+            notify(`Город «${city.name}» успешно удален!`);
             await fetchAdminCities();
             await fetchAdminBranches();
-            // Also update parent cities
             if (onUpdateCities) onUpdateCities();
             if (onUpdateBranches) onUpdateBranches();
           } else {
             const data = await res.json().catch(() => ({}));
-            if (addNotification) {
-              addNotification(data.error || 'Не удалось удалить город', 'info');
-            } else {
-              alert(data.error || 'Не удалось удалить город');
-            }
+            notify(data.error || 'Не удалось удалить город', 'info');
           }
         } catch (err) {
           console.error(err);
-          if (addNotification) {
-            addNotification('Ошибка при удалении города', 'info');
-          } else {
-            alert('Ошибка при удалении города');
-          }
+          notify('Ошибка при удалении города', 'info');
         }
       }
     );
@@ -2842,7 +2943,33 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       fetchAdminStocks();
       fetchAdminBranches();
     }
+    if (adminTab === 'users') {
+      fetchAdminUsers();
+    }
   }, [adminTab]);
+
+  const fetchAdminUsers = async () => {
+    try {
+      const res = await fetch('/api/admin/users?t=' + Date.now());
+      if (res.ok) setAdminUsers(await res.json());
+    } catch {}
+  };
+
+  const updateAdminUser = async (id: number, patch: { role?: string; bonus_balance?: number }) => {
+    await fetch(`/api/admin/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    fetchAdminUsers();
+  };
+
+  const deleteAdminUser = (id: number, name: string) => {
+    confirmAction('Удалить пользователя', `Удалить «${name}»? Все заказы останутся.`, async () => {
+      await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      fetchAdminUsers();
+    });
+  };
 
   const adminMapRef = React.useRef<any>(null);
   const activeMarkerRef = React.useRef<any>(null);
@@ -2954,7 +3081,7 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
             }
           } catch (err: any) {
             console.error('Error reverse geocoding clicked point:', err);
-            alert(`Не удалось автоматически определить адрес для выбранной точки (Ошибка: ${err.message || 'Ошибка сети/CORS'}). Вы можете ввести адрес вручную в текстовое поле.`);
+            notify(`Не удалось определить адрес для точки. Введите адрес вручную.`, 'info');
           }
         });
       } catch (err) {
@@ -2997,7 +3124,7 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
 
   const handleGeocode = async (addressStr: string) => {
     if (!addressStr || !addressStr.trim()) {
-      alert('Пожалуйста, введите адрес');
+      notify('Пожалуйста, введите адрес', 'info');
       return;
     }
 
@@ -3043,11 +3170,11 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
           adminMapRef.current.setView([lat, lon], 16);
         }
       } else {
-        alert('Адрес не найден на карте! Пожалуйста, проверьте правильность написания.');
+        notify('Адрес не найден на карте! Проверьте правильность написания.', 'info');
       }
     } catch (err) {
       console.error(err);
-      alert('Ошибка при поиске адреса. Пожалуйста, попробуйте позже.');
+      notify('Ошибка при поиске адреса. Попробуйте позже.', 'info');
     } finally {
       setIsGeocoding(false);
     }
@@ -3056,16 +3183,15 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
   const handleAddCityInline = async () => {
     const trimmedName = newCityName.trim();
     if (!trimmedName) {
-      alert('Пожалуйста, введите название города');
+      notify('Пожалуйста, введите название города', 'info');
       return;
     }
-    
-    // Check duplication check locally of current cities list
+
     const isDuplicate = adminCities.some(
       (city: any) => city.name.toLowerCase() === trimmedName.toLowerCase()
     );
     if (isDuplicate) {
-      alert('Этот город уже есть в списке!');
+      notify('Этот город уже есть в списке!', 'info');
       setNewCityName('');
       setIsCreatingNewCity(false);
       return;
@@ -3081,7 +3207,7 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       const data = await response.json();
       
       if (!data || data.length === 0) {
-        alert(`Город "${trimmedName}" не найден на карте! Пожалуйста, проверьте правильность написания.`);
+        notify(`Город "${trimmedName}" не найден на карте! Проверьте правильность написания.`, 'info');
         setIsGeocoding(false);
         return;
       }
@@ -3119,14 +3245,14 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
         
         setIsCreatingNewCity(false);
         setNewCityName('');
-        alert(`Город "${trimmedName}" успешно верифицирован и добавлен!`);
+        notify(`Город "${trimmedName}" добавлен!`);
       } else {
         const errData = await res.json().catch(() => ({}));
-        alert(errData.error || 'Не удалось добавить новый город');
+        notify(errData.error || 'Не удалось добавить новый город', 'info');
       }
     } catch (err: any) {
       console.error(err);
-      alert(`Ошибка при добавлении города: ${err.message || err}`);
+      notify(`Ошибка при добавлении города: ${err.message || err}`, 'info');
     } finally {
       setIsGeocoding(false);
     }
@@ -3169,9 +3295,9 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
         setIsAddingBranch(false);
         setNewBranch({ name: '', address: '', is_24_7: true, latitude: '56.0153', longitude: '92.8932', city_id: '' });
         fetchAdminBranches();
-        alert('Филиал успешно добавлен!');
+        notify('Филиал успешно добавлен!');
       } else {
-        alert('Ошибка при добавлении филиала');
+        notify('Ошибка при добавлении филиала', 'info');
       }
     } catch (err) {
       console.error(err);
@@ -3197,9 +3323,9 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       if (res.ok) {
         setEditingBranch(null);
         fetchAdminBranches();
-        alert('Филиал успешно обновлен!');
+        notify('Филиал успешно обновлен!');
       } else {
-        alert('Ошибка при обновлении филиала');
+        notify('Ошибка при обновлении филиала', 'info');
       }
     } catch (err) {
       console.error(err);
@@ -3215,9 +3341,9 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
           const res = await fetch(`/api/admin/branches/${id}`, { method: 'DELETE' });
           if (res.ok) {
             fetchAdminBranches();
-            alert('Филиал удален');
+            notify('Филиал удален');
           } else {
-            alert('Не удалось удалить филиал');
+            notify('Не удалось удалить филиал', 'info');
           }
         } catch (err) {
           console.error(err);
@@ -3241,7 +3367,7 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
           onUpdateMenu();
         }
       } else {
-        alert('Ошибка при сохранении количества');
+        notify('Ошибка при сохранении количества', 'info');
       }
     } catch (err) {
       console.error(err);
@@ -3308,25 +3434,25 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       if (res.ok) {
         setNewPromo({ code: '', discount_percent: '', min_order_amount: '', usage_limit: '', branch_id: '' });
         onUpdatePromo();
-        // Notification could be used here if passed as prop, but let's stick to simple alert for admin
-        alert('Промокод добавлен!');
+        notify('Промокод добавлен!');
       } else {
         const data = await res.json();
-        alert('Ошибка: ' + (data.error || 'Не удалось добавить промокод'));
+        notify('Ошибка: ' + (data.error || 'Не удалось добавить промокод'), 'info');
       }
     } catch (err) {
-      alert('Ошибка при добавлении промокода');
+      notify('Ошибка при добавлении промокода', 'info');
     }
   };
 
-  const deletePromo = async (id: number) => {
-    if (!window.confirm('Удалить этот промокод?')) return;
-    try {
-      const res = await fetch(`/api/admin/promo/${id}`, { method: 'DELETE' });
-      if (res.ok) onUpdatePromo();
-    } catch (err) {
-      alert('Ошибка удаления');
-    }
+  const deletePromo = (id: number) => {
+    confirmAction('Удалить промокод', 'Вы уверены, что хотите удалить этот промокод?', async () => {
+      try {
+        const res = await fetch(`/api/admin/promo/${id}`, { method: 'DELETE' });
+        if (res.ok) onUpdatePromo();
+      } catch (err) {
+        notify('Ошибка удаления', 'info');
+      }
+    });
   };
 
   const togglePromoStatus = async (promo: PromoCode) => {
@@ -3338,7 +3464,7 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       });
       if (res.ok) onUpdatePromo();
     } catch (err) {
-      alert('Ошибка обновления');
+      notify('Ошибка обновления', 'info');
     }
   };
 
@@ -3349,11 +3475,16 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       if (time) estimated_time = parseInt(time);
     }
     try {
-      await fetch(`/api/admin/orders/${id}`, {
+      const res = await fetch(`/api/admin/orders/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, estimated_time })
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || 'Не удалось обновить статус', 'info');
+        return;
+      }
       onUpdateStatus();
     } catch (err) {
       console.error('Failed to update status');
@@ -3377,20 +3508,37 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
     }
   };
 
+  const uploadImage = async (file: File, folder: 'news' | 'menu'): Promise<string | null> => {
+    const form = new FormData();
+    form.append('image', file);
+    try {
+      const res = await fetch(`/api/admin/upload/${folder}`, { method: 'POST', body: form });
+      if (res.ok) {
+        const data = await res.json();
+        return data.url as string;
+      }
+      const errData = await res.json().catch(() => ({}));
+      notify(errData.error || 'Ошибка загрузки изображения', 'info');
+    } catch {
+      notify('Ошибка загрузки изображения', 'info');
+    }
+    return null;
+  };
+
   const addMenuItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (variantsToAdd.length === 0) {
-      alert('Добавьте хотя бы один вариант (размер/цена)');
+      notify('Добавьте хотя бы один вариант (размер/цена)', 'info');
       return;
     }
     try {
       const res = await fetch('/api/admin/menu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          ...newItem, 
+        body: JSON.stringify({
+          ...newItem,
           category_id: parseInt(newItem.category_id),
-          variants: variantsToAdd 
+          variants: variantsToAdd
         })
       });
       if (res.ok) {
@@ -3398,10 +3546,10 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
         setVariantsToAdd([]);
         setIsAddingItem(false);
         onUpdateMenu();
-        alert('Блюдо добавлено!');
+        notify('Блюдо добавлено!');
       }
     } catch (err) {
-      alert('Ошибка при добавлении блюда');
+      notify('Ошибка при добавлении блюда', 'info');
     }
   };
 
@@ -3420,10 +3568,10 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
         setNewNews({ title: '', content: '', image_url: '', type: 'news', branch_id: '' });
         setIsAddingNews(false);
         onUpdateNews();
-        alert('Новость добавлена!');
+        notify('Новость добавлена!');
       }
     } catch (err) {
-      alert('Ошибка при добавлении новости');
+      notify('Ошибка при добавлении новости', 'info');
     }
   };
 
@@ -3439,21 +3587,22 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       if (res.ok) {
         setEditingNews(null);
         onUpdateNews();
-        alert('Новость обновлена!');
+        notify('Новость обновлена!');
       }
     } catch (err) {
-      alert('Ошибка при обновлении новости');
+      notify('Ошибка при обновлении новости', 'info');
     }
   };
 
-  const deleteNews = async (id: number) => {
-    if (!window.confirm('Удалить эту новость?')) return;
-    try {
-      await fetch(`/api/admin/news/${id}`, { method: 'DELETE' });
-      onUpdateNews();
-    } catch (err) {
-      alert('Ошибка при удалении');
-    }
+  const deleteNews = (id: number) => {
+    confirmAction('Удалить новость', 'Вы уверены, что хотите удалить эту новость?', async () => {
+      try {
+        await fetch(`/api/admin/news/${id}`, { method: 'DELETE' });
+        onUpdateNews();
+      } catch (err) {
+        notify('Ошибка при удалении', 'info');
+      }
+    });
   };
 
   const updateMenuItem = async (e: React.FormEvent) => {
@@ -3473,10 +3622,10 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
       if (res.ok) {
         setEditingItem(null);
         onUpdateMenu();
-        alert('Блюдо обновлено!');
+        notify('Блюдо обновлено!');
       }
     } catch (err) {
-      alert('Ошибка при обновлении блюда');
+      notify('Ошибка при обновлении блюда', 'info');
     }
   };
 
@@ -3486,14 +3635,15 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
     setNewVariant({ size_label: '', price: '' });
   };
 
-  const deleteMenuItem = async (id: number) => {
-    if (!window.confirm('Удалить это блюдо?')) return;
-    try {
-      await fetch(`/api/admin/menu/${id}`, { method: 'DELETE' });
-      onUpdateMenu();
-    } catch (err) {
-      alert('Ошибка при удалении');
-    }
+  const deleteMenuItem = (id: number) => {
+    confirmAction('Удалить блюдо', 'Вы уверены, что хотите удалить это блюдо?', async () => {
+      try {
+        await fetch(`/api/admin/menu/${id}`, { method: 'DELETE' });
+        onUpdateMenu();
+      } catch (err) {
+        notify('Ошибка при удалении', 'info');
+      }
+    });
   };
 
   const handleDeleteOrderAdmin = async (id: number) => {
@@ -3504,14 +3654,14 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
         try {
           const res = await fetch(`/api/orders/${id}`, { method: 'DELETE' });
           if (res.ok) {
-            alert('Заказ успешно удален!');
-            onUpdateStatus(); // Refresh parent orders
+            notify('Заказ успешно удален!');
+            onUpdateStatus();
           } else {
-            alert('Ошибка при удалении заказа');
+            notify('Ошибка при удалении заказа', 'info');
           }
         } catch (err) {
           console.error(err);
-          alert('Ошибка при удалении заказа');
+          notify('Ошибка при удалении заказа', 'info');
         }
       }
     );
@@ -3525,15 +3675,15 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
         try {
           const res = await fetch(`/api/orders/${id}/review`, { method: 'DELETE' });
           if (res.ok) {
-            alert('Отзыв успешно удален!');
-            onUpdateStatus(); // Refresh parent orders
-            fetchReviewStats(); // Refresh reviews summary stats
+            notify('Отзыв успешно удален!');
+            onUpdateStatus();
+            fetchReviewStats();
           } else {
-            alert('Ошибка при удалении отзыва');
+            notify('Ошибка при удалении отзыва', 'info');
           }
         } catch (err) {
           console.error(err);
-          alert('Ошибка при удалении отзыва');
+          notify('Ошибка при удалении отзыва', 'info');
         }
       }
     );
@@ -3555,81 +3705,129 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
   const filteredNews = adminBranchFilter === 'all' ? news : news.filter(n => n.branch_id === parseInt(adminBranchFilter) || n.branch_id === null);
   const filteredPromos = adminBranchFilter === 'all' ? promoCodes : promoCodes.filter(p => p.branch_id === parseInt(adminBranchFilter) || p.branch_id === null);
 
+  const adminTabs = [
+    { id: 'orders', label: 'Заказы' },
+    { id: 'menu', label: 'Меню' },
+    { id: 'users', label: 'Клиенты' },
+    { id: 'news', label: 'Новости' },
+    { id: 'reviews', label: 'Отзывы' },
+    { id: 'branches', label: 'Филиалы' },
+    { id: 'stock', label: 'Склад' },
+  ] as const;
+
   return (
-    <div className="space-y-6 pb-20">
-      {/* Branch filtering Toolbar */}
-      <div className="bg-zinc-900/60 border border-white/10 rounded-3xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="space-y-0.5">
-          <h4 className="text-xs font-black uppercase text-orange-500 italic tracking-wider flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
-            Управление филиалом
-          </h4>
-          <p className="text-[9px] text-white/40 uppercase font-black tracking-widest">Фильтрация заказов, новостей, акций, промокодов и отзывов</p>
+    <div className="space-y-4 pb-20">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-black uppercase italic text-white">Админ-панель</h2>
+          <p className="text-[10px] text-white/30 uppercase font-bold tracking-widest mt-0.5">Безумно Крутая Шаурма</p>
         </div>
-        <CustomSelect
-          value={adminBranchFilter}
-          onChange={setAdminBranchFilter}
-          options={[{value:'all',label:'Все филиалы (Показать всё)'}, ...adminBranches.map(b=>({value:String(b.id),label:`${b.address} (${b.city_name||'Неизвестно'})`}))]}
-          className="min-w-[220px]"
-        />
+        {['orders','news','reviews','stock'].includes(adminTab) && (
+          <CustomSelect
+            value={adminBranchFilter}
+            onChange={setAdminBranchFilter}
+            options={[{value:'all',label:'Все'}, ...adminBranches.map((b: any)=>({value:String(b.id),label:b.address}))]}
+            className="w-36 text-xs"
+          />
+        )}
       </div>
 
-      <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10 overflow-x-auto gap-1 no-scrollbar">
-        <button 
-          onClick={() => setAdminTab('orders')}
-          className={cn(
-            "px-4 py-3 rounded-xl font-bold text-xs uppercase italic transition-all whitespace-nowrap shrink-0",
-            adminTab === 'orders' ? "bg-orange-500 text-black" : "text-white/40"
-          )}
-        >
-          Заказы
-        </button>
-        <button 
-          onClick={() => setAdminTab('menu')}
-          className={cn(
-            "px-4 py-3 rounded-xl font-bold text-xs uppercase italic transition-all whitespace-nowrap shrink-0",
-            adminTab === 'menu' ? "bg-orange-500 text-black" : "text-white/40"
-          )}
-        >
-          Меню
-        </button>
-        <button 
-          onClick={() => setAdminTab('reviews')}
-          className={cn(
-            "px-4 py-3 rounded-xl font-bold text-xs uppercase italic transition-all whitespace-nowrap shrink-0",
-            adminTab === 'reviews' ? "bg-orange-500 text-black" : "text-white/40"
-          )}
-        >
-          Отзывы
-        </button>
-        <button 
-          onClick={() => setAdminTab('news')}
-          className={cn(
-            "px-4 py-3 rounded-xl font-bold text-xs uppercase italic transition-all whitespace-nowrap shrink-0",
-            adminTab === 'news' ? "bg-orange-500 text-black" : "text-white/40"
-          )}
-        >
-          Новости
-        </button>
-        <button 
-          onClick={() => setAdminTab('branches')}
-          className={cn(
-            "px-4 py-3 rounded-xl font-bold text-xs uppercase italic transition-all whitespace-nowrap shrink-0",
-            adminTab === 'branches' ? "bg-orange-500 text-black" : "text-white/40"
-          )}
-        >
-          Филиалы
-        </button>
-        <button 
-          onClick={() => setAdminTab('stock')}
-          className={cn(
-            "px-4 py-3 rounded-xl font-bold text-xs uppercase italic transition-all whitespace-nowrap shrink-0",
-            adminTab === 'stock' ? "bg-orange-500 text-black" : "text-white/40"
-          )}
-        >
-          Склад
-        </button>
+      {/* Tab bar */}
+      <div className="flex overflow-x-auto gap-1.5 no-scrollbar pb-0.5">
+        {adminTabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setAdminTab(t.id as any)}
+            className={cn(
+              "px-3.5 py-2 rounded-xl font-bold text-[11px] uppercase tracking-wide transition-all whitespace-nowrap shrink-0",
+              adminTab === t.id
+                ? "bg-orange-500 text-black shadow-lg shadow-orange-500/25"
+                : "bg-white/5 text-white/40 hover:text-white/70 hover:bg-white/8"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
+
+      {/* Users tab */}
+      {adminTab === 'users' && (
+        <div className="space-y-4">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Поиск по имени, email, телефону..."
+              value={adminUsersSearch}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAdminUsersSearch(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-4 pr-4 text-sm outline-none focus:border-orange-500 transition-all"
+            />
+          </div>
+          {adminUsers
+            .filter((u: any) => {
+              if (!adminUsersSearch) return true;
+              const q = adminUsersSearch.toLowerCase();
+              return (u.name||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q) || (u.phone||'').toLowerCase().includes(q);
+            })
+            .map((u: any) => (
+              <div key={u.id} className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-black text-sm truncate">{u.name || 'Без имени'}</span>
+                      <span className={cn(
+                        "text-[9px] font-black uppercase px-2 py-0.5 rounded-full",
+                        u.role === 'admin' ? "bg-orange-500/20 text-orange-400" : "bg-white/5 text-white/30"
+                      )}>{u.role}</span>
+                    </div>
+                    <p className="text-white/40 text-[11px] truncate">{u.email}</p>
+                    <p className="text-white/30 text-[11px]">{u.phone}</p>
+                  </div>
+                  <button
+                    onClick={() => deleteAdminUser(u.id, u.name || u.email)}
+                    className="text-red-500/40 hover:text-red-500 transition-colors shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap text-[10px] text-white/30">
+                  <span>Заказов: <b className="text-white/60">{u.orders_count}</b></span>
+                  <span>·</span>
+                  <span>Бонусы: <b className="text-orange-400">{u.bonus_balance} ₽</b></span>
+                  <span>·</span>
+                  <span>Email {u.email_verified ? '✓' : '✗'}</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => updateAdminUser(u.id, { role: u.role === 'admin' ? 'user' : 'admin' })}
+                    className={cn(
+                      "text-[10px] font-black uppercase rounded-xl px-3 py-1.5 transition-all border",
+                      u.role === 'admin'
+                        ? "border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                        : "border-white/10 text-white/40 hover:text-white hover:border-white/20"
+                    )}
+                  >
+                    {u.role === 'admin' ? 'Снять права' : 'Сделать админом'}
+                  </button>
+                  <div className="flex items-center gap-1 flex-1">
+                    <input
+                      type="number"
+                      defaultValue={u.bonus_balance}
+                      onBlur={(e: React.FocusEvent<HTMLInputElement>) => updateAdminUser(u.id, { bonus_balance: parseFloat(e.target.value) || 0 })}
+                      className="w-20 bg-black/30 border border-white/10 rounded-xl px-2 py-1 text-[11px] text-orange-400 font-bold outline-none focus:border-orange-500 text-center"
+                    />
+                    <span className="text-[10px] text-white/30">бонусов</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          {adminUsers.length === 0 && (
+            <div className="text-center py-16 text-white/20 text-xs font-black uppercase tracking-wider">
+              Загрузка пользователей...
+            </div>
+          )}
+        </div>
+      )}
 
       {adminTab === 'orders' && (
         <div className="space-y-4">
@@ -3675,7 +3873,7 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                       {value:'pending',label:'Ожидает'},
                       {value:'preparing',label:'Готовится'},
                       {value:'ready',label:'Готов'},
-                      {value:'delivered',label:'Доставлен'},
+                      {value:'delivered',label:'Выдан'},
                       {value:'cancelled',label:'Отменен'},
                     ]}
                   />
@@ -3732,14 +3930,23 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                   className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 min-h-[80px]"
                   required
                 />
-                <input 
-                  type="url" 
-                  placeholder="URL изображения"
-                  value={newNews.image_url}
-                  onChange={(e) => setNewNews({...newNews, image_url: e.target.value})}
-                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
-                  required
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="URL изображения"
+                    value={newNews.image_url}
+                    onChange={(e) => setNewNews({...newNews, image_url: e.target.value})}
+                    className="flex-1 bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                  />
+                  <label className="shrink-0 cursor-pointer bg-white/10 hover:bg-orange-500/20 border border-white/10 rounded-2xl px-3 flex items-center text-xs font-black text-white/60 hover:text-orange-500 transition-all">
+                    📎
+                    <input type="file" accept="image/*" className="hidden" onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                      const f = e.target.files?.[0]; if (!f) return;
+                      const url = await uploadImage(f, 'news');
+                      if (url) setNewNews({...newNews, image_url: url});
+                    }} />
+                  </label>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <CustomSelect
                     value={newNews.type}
@@ -3786,14 +3993,23 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                   className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 min-h-[80px]"
                   required
                 />
-                <input 
-                  type="url" 
-                  placeholder="URL изображения"
-                  value={editingNews.image_url}
-                  onChange={(e) => setEditingNews({...editingNews, image_url: e.target.value})}
-                  className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
-                  required
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="URL изображения"
+                    value={editingNews.image_url}
+                    onChange={(e) => setEditingNews({...editingNews, image_url: e.target.value})}
+                    className="flex-1 bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                  />
+                  <label className="shrink-0 cursor-pointer bg-white/10 hover:bg-orange-500/20 border border-white/10 rounded-2xl px-3 flex items-center text-xs font-black text-white/60 hover:text-orange-500 transition-all">
+                    📎
+                    <input type="file" accept="image/*" className="hidden" onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                      const f = e.target.files?.[0]; if (!f) return;
+                      const url = await uploadImage(f, 'news');
+                      if (url) setEditingNews({...editingNews, image_url: url});
+                    }} />
+                  </label>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <CustomSelect
                     value={editingNews.type}
@@ -3891,6 +4107,11 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                     <div>
                       <h4 className="font-bold text-sm tracking-tight">{order.customer_name}</h4>
                       <p className="text-[10px] text-white/40 uppercase font-black tracking-widest">Заказ #{order.id}</p>
+                      {adminBranchFilter === 'all' && order.branch_id && (
+                        <p className="text-[10px] text-orange-400/70 uppercase font-black tracking-widest mt-0.5">
+                          {adminBranches.find((b: any) => b.id === order.branch_id)?.address || `Филиал #${order.branch_id}`}
+                        </p>
+                      )}
                     </div>
                     <div className="flex gap-1">
                       {[...Array(5)].map((_, i) => (
@@ -4077,14 +4298,23 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                       <option key={c.id} value={c.id.toString()}>{c.name}</option>
                     ))}
                   </select>
-                  <input 
-                    type="url" 
-                    placeholder="URL изображения"
-                    value={newItem.image_url}
-                    onChange={(e) => setNewItem({...newItem, image_url: e.target.value})}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
-                    required
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="URL изображения"
+                      value={newItem.image_url}
+                      onChange={(e) => setNewItem({...newItem, image_url: e.target.value})}
+                      className="flex-1 bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                    />
+                    <label className="shrink-0 cursor-pointer bg-white/10 hover:bg-orange-500/20 border border-white/10 rounded-2xl px-3 flex items-center text-xs font-black text-white/60 hover:text-orange-500 transition-all">
+                      📎
+                      <input type="file" accept="image/*" className="hidden" onChange={async (ev: React.ChangeEvent<HTMLInputElement>) => {
+                        const f = ev.target.files?.[0]; if (!f) return;
+                        const url = await uploadImage(f, 'menu');
+                        if (url) setNewItem({...newItem, image_url: url});
+                      }} />
+                    </label>
+                  </div>
 
                   <div className="pt-4 border-t border-white/5 space-y-3">
                     <p className="text-[10px] font-black uppercase text-white/40 italic">Варианты (размер и цена)</p>
@@ -4161,14 +4391,23 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
                     className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500 min-h-[80px]"
                     required
                   />
-                  <input 
-                    type="url" 
-                    placeholder="URL изображения"
-                    value={editingItem.image_url}
-                    onChange={(e) => setEditingItem({...editingItem, image_url: e.target.value})}
-                    className="w-full bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
-                    required
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="URL изображения"
+                      value={editingItem.image_url}
+                      onChange={(e) => setEditingItem({...editingItem, image_url: e.target.value})}
+                      className="flex-1 bg-black/40 border border-white/10 rounded-2xl py-3 px-4 text-sm outline-none focus:border-orange-500"
+                    />
+                    <label className="shrink-0 cursor-pointer bg-white/10 hover:bg-orange-500/20 border border-white/10 rounded-2xl px-3 flex items-center text-xs font-black text-white/60 hover:text-orange-500 transition-all">
+                      📎
+                      <input type="file" accept="image/*" className="hidden" onChange={async (ev: React.ChangeEvent<HTMLInputElement>) => {
+                        const f = ev.target.files?.[0]; if (!f) return;
+                        const url = await uploadImage(f, 'menu');
+                        if (url) setEditingItem({...editingItem, image_url: url});
+                      }} />
+                    </label>
+                  </div>
                   <div className="flex items-center gap-2">
                     <input 
                       type="checkbox" 
@@ -4711,29 +4950,13 @@ function AdminPanel({ orders, user, menu, news, promoCodes, onUpdateStatus, onUp
           <div className="bg-[#0a0a0a] p-4 rounded-3xl border border-white/5 space-y-3">
             <div>
               <h3 className="text-sm font-black uppercase italic text-orange-500">Складской остаток</h3>
-              <p className="text-white/40 text-[10px] font-bold uppercase tracking-wider">Учет количества напитков по филиалам</p>
-            </div>
-            
-            {/* Filter */}
-            <div className="flex gap-2 items-center text-white font-bold text-xs select-container">
-              <span className="text-white/40 uppercase text-[9px] font-black tracking-wider">Филиал:</span>
-              <select
-                value={stockBranchFilter}
-                onChange={(e) => setStockBranchFilter(e.target.value)}
-                className="bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-orange-500 flex-1 min-w-0 font-bold"
-              >
-                <option value="all" className="bg-zinc-950 text-white">Все филиалы</option>
-                {adminBranches.map(b => (
-                  <option key={b.id} value={b.id.toString()} className="bg-zinc-950 text-white">{b.address || b.name} ({b.city_name || 'Неизвестно'})</option>
-                ))}
-              </select>
+              <p className="text-white/40 text-[10px] font-bold uppercase tracking-wider">Учет количества товаров по филиалам</p>
             </div>
           </div>
 
           {/* List ingredients stock */}
           <div className="space-y-3">
-            {adminStocks
-              .filter(s => stockBranchFilter === 'all' || s.branch_id.toString() === stockBranchFilter)
+            {(adminBranchFilter === 'all' ? adminStocks : adminStocks.filter((s: any) => s.branch_id.toString() === adminBranchFilter))
               .map((s, idx) => (
                 <div key={`${s.branch_id}-${s.variant_id}-${idx}`} className="bg-white/5 border border-white/10 rounded-3xl p-4 flex items-center justify-between gap-4">
                   <div className="space-y-1 min-w-0 flex-1">

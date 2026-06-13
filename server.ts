@@ -3,8 +3,10 @@ import { createServer as createViteServer } from 'vite';
 import mysql from 'mysql2/promise';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
+import multer from 'multer';
 
 dotenv.config();
 
@@ -36,17 +38,153 @@ function buildCodeEmail(title: string, subtitle: string, code: string, minutes: 
 </body></html>`;
 }
 
+function buildReceiptEmail(data: {
+  orderId: number;
+  customerName: string;
+  customerPhone: string;
+  paymentId: string;
+  paidAt: string;
+  items: { name: string; size: string; quantity: number; price: number }[];
+  totalAmount: number;
+  discountAmount: number;
+  bonusesUsed: number;
+}): string {
+  const itemRows = data.items.map(item => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);color:rgba(255,255,255,0.85);font-size:13px;">
+        ${item.name}
+        <span style="display:block;font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;">${item.size}</span>
+      </td>
+      <td style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);text-align:center;color:rgba(255,255,255,0.5);font-size:12px;">${item.quantity}</td>
+      <td style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);text-align:right;color:#f97316;font-weight:900;font-size:13px;">${(item.price * item.quantity).toFixed(0)} ₽</td>
+    </tr>`).join('');
+
+  const discountRow = data.discountAmount > 0 ? `
+    <tr>
+      <td colspan="2" style="padding:6px 0;color:rgba(255,255,255,0.4);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Скидка</td>
+      <td style="padding:6px 0;text-align:right;color:#22c55e;font-weight:900;font-size:13px;">−${data.discountAmount.toFixed(0)} ₽</td>
+    </tr>` : '';
+
+  const bonusRow = data.bonusesUsed > 0 ? `
+    <tr>
+      <td colspan="2" style="padding:6px 0;color:rgba(255,255,255,0.4);font-size:11px;text-transform:uppercase;letter-spacing:1px;">Бонусы</td>
+      <td style="padding:6px 0;text-align:right;color:#22c55e;font-weight:900;font-size:13px;">−${data.bonusesUsed.toFixed(0)} ₽</td>
+    </tr>` : '';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:24px;overflow:hidden;max-width:600px;width:100%;">
+
+        <!-- Header -->
+        <tr><td style="background:linear-gradient(135deg,#f97316,#ea6c0a);padding:28px 40px;">
+          <h1 style="margin:0;color:#000;font-size:20px;font-weight:900;text-transform:uppercase;font-style:italic;">Безумно Крутая Шаурма</h1>
+          <p style="margin:6px 0 0;color:rgba(0,0,0,0.6);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Чек об оплате</p>
+        </td></tr>
+
+        <!-- Order meta -->
+        <tr><td style="padding:28px 40px 0;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="width:50%;vertical-align:top;">
+                <p style="margin:0 0 4px;color:rgba(255,255,255,0.3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Заказ</p>
+                <p style="margin:0;color:#f97316;font-size:22px;font-weight:900;font-style:italic;">#${data.orderId}</p>
+              </td>
+              <td style="width:50%;vertical-align:top;text-align:right;">
+                <p style="margin:0 0 4px;color:rgba(255,255,255,0.3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Дата оплаты</p>
+                <p style="margin:0;color:rgba(255,255,255,0.8);font-size:13px;font-weight:700;">${data.paidAt}</p>
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <!-- Customer info -->
+        <tr><td style="padding:20px 40px 0;">
+          <div style="background:rgba(249,115,22,0.08);border:1px solid rgba(249,115,22,0.2);border-radius:14px;padding:16px 20px;">
+            <p style="margin:0 0 4px;color:rgba(255,255,255,0.3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Покупатель</p>
+            <p style="margin:0;color:rgba(255,255,255,0.9);font-size:14px;font-weight:700;">${data.customerName}</p>
+            <p style="margin:4px 0 0;color:rgba(255,255,255,0.4);font-size:12px;">${data.customerPhone}</p>
+          </div>
+        </td></tr>
+
+        <!-- Items -->
+        <tr><td style="padding:24px 40px 0;">
+          <p style="margin:0 0 12px;color:rgba(255,255,255,0.3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Состав заказа</p>
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <th style="text-align:left;color:rgba(255,255,255,0.2);font-size:9px;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.08);">Позиция</th>
+              <th style="text-align:center;color:rgba(255,255,255,0.2);font-size:9px;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.08);">Кол-во</th>
+              <th style="text-align:right;color:rgba(255,255,255,0.2);font-size:9px;text-transform:uppercase;letter-spacing:1px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.08);">Сумма</th>
+            </tr>
+            ${itemRows}
+            ${discountRow}
+            ${bonusRow}
+          </table>
+        </td></tr>
+
+        <!-- Total -->
+        <tr><td style="padding:16px 40px 0;">
+          <div style="background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.3);border-radius:14px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;">
+            <table width="100%"><tr>
+              <td style="color:rgba(255,255,255,0.5);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Итого оплачено</td>
+              <td style="text-align:right;color:#f97316;font-size:24px;font-weight:900;font-style:italic;">${data.totalAmount.toFixed(0)} ₽</td>
+            </tr></table>
+          </div>
+        </td></tr>
+
+        <!-- Payment info -->
+        <tr><td style="padding:16px 40px 0;">
+          <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:14px;padding:14px 20px;">
+            <table width="100%">
+              <tr>
+                <td style="color:rgba(255,255,255,0.3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;padding-bottom:6px;" colspan="2">Платёж</td>
+              </tr>
+              <tr>
+                <td style="color:rgba(255,255,255,0.5);font-size:11px;">Способ оплаты</td>
+                <td style="text-align:right;color:#22c55e;font-size:12px;font-weight:700;">✓ СБП (ЮKassa)</td>
+              </tr>
+              <tr>
+                <td style="color:rgba(255,255,255,0.5);font-size:11px;padding-top:4px;">ID транзакции</td>
+                <td style="text-align:right;color:rgba(255,255,255,0.4);font-size:10px;font-family:monospace;padding-top:4px;">${data.paymentId}</td>
+              </tr>
+            </table>
+          </div>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:28px 40px;border-top:1px solid rgba(255,255,255,0.06);margin-top:24px;">
+          <p style="margin:0;color:rgba(255,255,255,0.2);font-size:11px;text-align:center;line-height:1.6;">
+            Спасибо за заказ! Если у вас есть вопросы, свяжитесь с нами.<br/>
+            <span style="font-size:9px;text-transform:uppercase;letter-spacing:2px;color:rgba(255,255,255,0.1);">Дипломный проект · не используется в коммерческих целях</span>
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
 async function sendEmail(to: string, subject: string, html: string) {
+  const port = parseInt(process.env.SMTP_PORT || '587');
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.yandex.ru',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false,
+    port,
+    secure: port === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    tls: { rejectUnauthorized: false },
   });
-  await transporter.sendMail({
-    from: `"Безумно Крутая Шаурма" <${process.env.SMTP_USER}>`,
-    to, subject, html,
-  });
+  try {
+    await transporter.sendMail({
+      from: `"Безумно Крутая Шаурма" <${process.env.SMTP_USER}>`,
+      to, subject, html,
+    });
+  } catch (err: any) {
+    console.error('[SMTP ERROR]', err?.message || err);
+    throw err;
+  }
 }
 
 const app = express();
@@ -55,6 +193,43 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// File uploads
+const uploadsRoot = path.join(process.cwd(), 'uploads');
+['news', 'menu'].forEach(dir => {
+  const p = path.join(uploadsRoot, dir);
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+});
+app.use('/uploads', express.static(uploadsRoot));
+
+const makeStorage = (folder: 'news' | 'menu') => multer.diskStorage({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  destination: (_req: any, _file: any, cb: any) => cb(null, path.join(uploadsRoot, folder)),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  filename: (_req: any, file: any, cb: any) => {
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+  },
+});
+const UPLOAD_LIMIT = 20 * 1024 * 1024; // 20 MB
+const uploadNews = multer({ storage: makeStorage('news'), limits: { fileSize: UPLOAD_LIMIT } });
+const uploadMenu = multer({ storage: makeStorage('menu'), limits: { fileSize: UPLOAD_LIMIT } });
+
+app.post('/api/admin/upload/news', (req: any, res: any) => {
+  uploadNews.single('image')(req, res, (err: any) => {
+    if (err) return res.status(400).json({ error: err.message || 'Upload error' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ url: `/uploads/news/${req.file.filename}` });
+  });
+});
+
+app.post('/api/admin/upload/menu', (req: any, res: any) => {
+  uploadMenu.single('image')(req, res, (err: any) => {
+    if (err) return res.status(400).json({ error: err.message || 'Upload error' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ url: `/uploads/menu/${req.file.filename}` });
+  });
+});
 
 // Set Cache-Control for all API requests to prevent stale data
 app.use('/api', (req, res, next) => {
@@ -224,11 +399,19 @@ async function initDb() {
     try {
       const [colsPlatega]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'platega_transaction_id'");
       if (colsPlatega.length === 0) {
-        console.log('Adding platega_transaction_id column to orders table...');
         await connection.query("ALTER TABLE orders ADD COLUMN platega_transaction_id VARCHAR(100) DEFAULT NULL AFTER is_paid");
       }
     } catch (err) {
-      console.warn('Migration for orders platega_transaction_id failed:', err);
+      console.warn('Migration platega_transaction_id:', err);
+    }
+
+    try {
+      const [colsYk]: any = await connection.query("SHOW COLUMNS FROM orders LIKE 'yukassa_payment_id'");
+      if (colsYk.length === 0) {
+        await connection.query("ALTER TABLE orders ADD COLUMN yukassa_payment_id VARCHAR(100) DEFAULT NULL AFTER platega_transaction_id");
+      }
+    } catch (err) {
+      console.warn('Migration yukassa_payment_id:', err);
     }
 
     // 7. News/Carousel
@@ -576,24 +759,53 @@ initDb();
 // Auth
 app.post('/api/auth/register', async (req, res) => {
   const { phone, email, password, name } = req.body;
+  let userId: number | null = null;
   try {
     const [result]: any = await pool.query(
       'INSERT INTO users (phone, email, password, name, email_verified) VALUES (?, ?, ?, ?, FALSE)',
       [phone, email, password, name]
     );
-    // Generate 6-digit code
+    userId = result.insertId;
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+    const expires = new Date(Date.now() + 15 * 60 * 1000);
     await pool.query(
-      'INSERT INTO auth_codes (email, code, type, expires_at) VALUES (?, ?, "verify", ?)',
-      [email, code, expires]
+      'INSERT INTO auth_codes (email, code, type, expires_at) VALUES (?, ?, ?, ?)',
+      [email, code, 'verify', expires]
     );
     const html = buildCodeEmail('Подтверждение регистрации', 'Введите код в приложении для активации аккаунта:', code, 15);
     await sendEmail(email, 'Подтверждение регистрации — Безумно Крутая Шаурма', html);
-    res.status(201).json({ pending: true, userId: result.insertId, email });
+    res.status(201).json({ pending: true, userId, email });
   } catch (err: any) {
+    console.error('[REGISTER ERROR]', err?.message || err, err?.code);
     if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Телефон или Email уже зарегистрированы' });
-    res.status(500).json({ error: 'Ошибка регистрации: ' + err.message });
+    if (userId) {
+      try { await pool.query('DELETE FROM users WHERE id = ?', [userId]); } catch {}
+    }
+    res.status(500).json({ error: 'Не удалось отправить письмо. Проверьте email и попробуйте снова.' });
+  }
+});
+
+app.post('/api/auth/resend-code', async (req, res) => {
+  const { email, type } = req.body;
+  try {
+    const [users]: any = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
+    if (users.length === 0) return res.status(404).json({ error: 'Email не найден' });
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expires = new Date(Date.now() + 15 * 60 * 1000);
+    await pool.query(
+      'INSERT INTO auth_codes (email, code, type, expires_at) VALUES (?, ?, ?, ?)',
+      [email, code, type || 'verify', expires]
+    );
+    const isReset = type === 'reset';
+    const html = buildCodeEmail(
+      isReset ? 'Восстановление пароля' : 'Подтверждение регистрации',
+      isReset ? 'Используйте этот код для сброса пароля:' : 'Введите код в приложении для активации аккаунта:',
+      code, 15
+    );
+    await sendEmail(email, isReset ? 'Восстановление пароля — Безумно Крутая Шаурма' : 'Подтверждение регистрации — Безумно Крутая Шаурма', html);
+    res.json({ sent: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Не удалось отправить письмо' });
   }
 });
 
@@ -618,8 +830,8 @@ app.post('/api/auth/verify-email', async (req, res) => {
   const { email, code } = req.body;
   try {
     const [rows]: any = await pool.query(
-      'SELECT * FROM auth_codes WHERE email = ? AND code = ? AND type = "verify" AND used = FALSE AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
-      [email, code]
+      'SELECT * FROM auth_codes WHERE email = ? AND code = ? AND type = ? AND used = FALSE AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
+      [email, code, 'verify']
     );
     if (rows.length === 0) return res.status(400).json({ error: 'Неверный или истёкший код' });
     await pool.query('UPDATE auth_codes SET used = TRUE WHERE id = ?', [rows[0].id]);
@@ -639,13 +851,14 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const expires = new Date(Date.now() + 15 * 60 * 1000);
     await pool.query(
-      'INSERT INTO auth_codes (email, code, type, expires_at) VALUES (?, ?, "reset", ?)',
-      [email, code, expires]
+      'INSERT INTO auth_codes (email, code, type, expires_at) VALUES (?, ?, ?, ?)',
+      [email, code, 'reset', expires]
     );
     const html = buildCodeEmail('Восстановление пароля', 'Используйте этот код для сброса пароля:', code, 15);
     await sendEmail(email, 'Восстановление пароля — Безумно Крутая Шаурма', html);
     res.json({ sent: true });
   } catch (err: any) {
+    console.error('[FORGOT-PASSWORD ERROR]', err?.message || err, err?.code);
     res.status(500).json({ error: 'Ошибка отправки письма' });
   }
 });
@@ -654,8 +867,8 @@ app.post('/api/auth/reset-password', async (req, res) => {
   const { email, code, newPassword } = req.body;
   try {
     const [rows]: any = await pool.query(
-      'SELECT * FROM auth_codes WHERE email = ? AND code = ? AND type = "reset" AND used = FALSE AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
-      [email, code]
+      'SELECT * FROM auth_codes WHERE email = ? AND code = ? AND type = ? AND used = FALSE AND expires_at > NOW() ORDER BY id DESC LIMIT 1',
+      [email, code, 'reset']
     );
     if (rows.length === 0) return res.status(400).json({ error: 'Неверный или истёкший код' });
     await pool.query('UPDATE auth_codes SET used = TRUE WHERE id = ?', [rows[0].id]);
@@ -907,61 +1120,54 @@ app.post('/api/orders', async (req, res) => {
  
     await connection.commit();
 
-    let platega_redirect: string | null = null;
-    let platega_transaction_id: string | null = null;
+    let payment_redirect: string | null = null;
+    let yukassa_payment_id: string | null = null;
 
-    if (paymentMethod === 'platega') {
-      const merchantId = process.env.PLATEGA_MERCHANT_ID;
-      const secret = process.env.PLATEGA_SECRET;
-      if (merchantId && secret) {
+    if (paymentMethod === 'yukassa') {
+      const shopId = process.env.YUKASSA_SHOP_ID;
+      const secretKey = process.env.YUKASSA_SECRET_KEY;
+      if (shopId && secretKey) {
         try {
           const host = req.get('host') || 'localhost:3000';
           const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
           const protocol = isHttps ? 'https' : 'http';
-          const isLocalHost = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
-          const successURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
-            ? `${protocol}://${host}/?orderId=${orderId}&payment=success`
-            : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=success`;
-          const failedURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
-            ? `${protocol}://${host}/?orderId=${orderId}&payment=failed`
-            : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=failed`;
+          const returnUrl = `${protocol}://${host}/?orderId=${orderId}&payment=success`;
 
-          const plategaRes = await fetch('https://app.platega.io/transaction/process', {
+          const ykRes = await fetch('https://api.yookassa.ru/v3/payments', {
             method: 'POST',
             headers: {
-              'X-MerchantId': merchantId,
-              'X-Secret': secret,
-              'Content-Type': 'application/json'
+              'Authorization': 'Basic ' + Buffer.from(`${shopId}:${secretKey}`).toString('base64'),
+              'Content-Type': 'application/json',
+              'Idempotence-Key': `order-${orderId}-${Date.now()}`
             },
             body: JSON.stringify({
-              paymentMethod: 2,
-              paymentDetails: { amount: total_amount, currency: 'RUB' },
-              description: `Оплата заказа №${orderId} в Крутая Шаурма`,
-              return: successURL,
-              failedUrl: failedURL,
-              payload: String(orderId)
+              amount: { value: Number(total_amount).toFixed(2), currency: 'RUB' },
+              confirmation: { type: 'redirect', return_url: returnUrl },
+              capture: true,
+              description: `Оплата заказа №${orderId} — Безумно Крутая Шаурма`,
+              metadata: { order_id: String(orderId) }
             })
           });
 
-          if (plategaRes.ok) {
-            const plategaData = await plategaRes.json();
-            platega_transaction_id = plategaData.transactionId || null;
-            platega_redirect = plategaData.redirect || null;
-            if (platega_transaction_id) {
-              await pool.query('UPDATE orders SET platega_transaction_id = ? WHERE id = ?', [platega_transaction_id, orderId]);
+          if (ykRes.ok) {
+            const ykData = await ykRes.json();
+            yukassa_payment_id = ykData.id || null;
+            payment_redirect = ykData.confirmation?.confirmation_url || null;
+            if (yukassa_payment_id) {
+              await pool.query('UPDATE orders SET yukassa_payment_id = ? WHERE id = ?', [yukassa_payment_id, orderId]);
             }
           } else {
-            console.error('Platega API error:', await plategaRes.text());
+            console.error('YuKassa API error:', await ykRes.text());
           }
-        } catch (plategaErr) {
-          console.error('Platega payment creation failed:', plategaErr);
+        } catch (ykErr) {
+          console.error('YuKassa payment creation failed:', ykErr);
         }
       } else {
-        console.warn('PLATEGA_MERCHANT_ID or PLATEGA_SECRET not set in environment');
+        console.warn('YUKASSA_SHOP_ID or YUKASSA_SECRET_KEY not set in environment');
       }
     }
 
-    res.status(201).json({ id: orderId, status: 'pending', platega_redirect, platega_transaction_id });
+    res.status(201).json({ id: orderId, status: 'pending', payment_redirect, yukassa_payment_id });
   } catch (err) {
     await connection.rollback();
     console.error('Order error:', err);
@@ -971,112 +1177,124 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-// Platega Webhook Receiver (СБП QR)
-app.post('/api/payment/platega-webhook', async (req, res) => {
-  console.log('Received Platega webhook:', req.body);
+// YuKassa Webhook
+app.post('/api/payment/yukassa-webhook', async (req, res) => {
+  const { event, object } = req.body;
+  if (!object) return res.status(400).send('Bad request');
 
-  // Verify credentials from Platega headers
-  const incomingMerchantId = req.headers['x-merchantid'] as string;
-  const incomingSecret = req.headers['x-secret'] as string;
+  const orderId = parseInt(object.metadata?.order_id);
+  if (isNaN(orderId)) return res.status(400).send('Invalid order id');
 
-  if (
-    process.env.PLATEGA_MERCHANT_ID &&
-    (incomingMerchantId !== process.env.PLATEGA_MERCHANT_ID || incomingSecret !== process.env.PLATEGA_SECRET)
-  ) {
-    console.warn('Platega webhook: invalid credentials');
-    return res.status(401).send('Unauthorized');
-  }
-
-  const { id: transactionId, status, payload } = req.body;
-
-  if (!payload) {
-    return res.status(400).send('Missing payload');
-  }
-
-  const orderId = parseInt(payload);
-  if (isNaN(orderId)) {
-    return res.status(400).send('Invalid order id in payload');
-  }
-
-  if (status === 'CONFIRMED') {
+  if (event === 'payment.succeeded') {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      const [orders]: any = await connection.query('SELECT * FROM orders WHERE id = ?', [orderId]);
-      if (orders.length === 0) {
-        connection.release();
-        return res.status(404).send('Order not found');
-      }
       await connection.query(
-        "UPDATE orders SET is_paid = 1, status = CASE WHEN status = 'pending' THEN 'preparing' ELSE status END, platega_transaction_id = ? WHERE id = ?",
-        [transactionId || null, orderId]
+        "UPDATE orders SET is_paid = 1, status = CASE WHEN status = 'pending' THEN 'preparing' ELSE status END, yukassa_payment_id = ? WHERE id = ?",
+        [object.id || null, orderId]
       );
       await connection.commit();
-      console.log(`Order #${orderId} marked as paid via Platega (txn: ${transactionId}).`);
+      console.log(`Order #${orderId} paid via YuKassa (${object.id})`);
     } catch (err) {
       await connection.rollback();
-      console.error('Platega webhook processing error:', err);
       return res.status(500).send('Internal error');
     } finally {
       connection.release();
     }
-  } else {
-    console.log(`Platega webhook: order #${orderId} status = ${status} (no action)`);
-  }
 
+    // Send receipt email
+    try {
+      const [orderRows]: any = await pool.query(
+        `SELECT o.id, o.customer_name, o.customer_phone, o.total_amount,
+                o.discount_amount, o.bonuses_used, o.created_at,
+                u.email
+         FROM orders o
+         LEFT JOIN users u ON o.user_id = u.id
+         WHERE o.id = ?`,
+        [orderId]
+      );
+      const order = orderRows[0];
+      if (order?.email) {
+        const [itemRows]: any = await pool.query(
+          `SELECT p.name, pv.size_label, oi.quantity, oi.price
+           FROM order_items oi
+           JOIN product_variants pv ON oi.variant_id = pv.id
+           JOIN products p ON pv.product_id = p.id
+           WHERE oi.order_id = ?`,
+          [orderId]
+        );
+        const paidAt = new Date().toLocaleString('ru-RU', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Krasnoyarsk'
+        });
+        const html = buildReceiptEmail({
+          orderId,
+          customerName: order.customer_name || 'Покупатель',
+          customerPhone: order.customer_phone || '',
+          paymentId: object.id || '',
+          paidAt,
+          items: itemRows.map((r: any) => ({
+            name: r.name,
+            size: r.size_label,
+            quantity: r.quantity,
+            price: parseFloat(r.price),
+          })),
+          totalAmount: parseFloat(order.total_amount),
+          discountAmount: parseFloat(order.discount_amount || 0),
+          bonusesUsed: parseFloat(order.bonuses_used || 0),
+        });
+        await sendEmail(order.email, `Чек об оплате заказа #${orderId} — Безумно Крутая Шаурма`, html);
+        console.log(`Receipt sent to ${order.email} for order #${orderId}`);
+      }
+    } catch (mailErr) {
+      console.error('Failed to send receipt email:', mailErr);
+    }
+  }
   res.status(200).send('OK');
 });
 
-// Create a fresh Platega payment link for an existing unpaid order
-app.post('/api/orders/:id/platega-link', async (req, res) => {
+// Create a fresh YuKassa payment link for an existing unpaid order
+app.post('/api/orders/:id/yukassa-link', async (req, res) => {
   const orderId = parseInt(req.params.id);
-  const merchantId = process.env.PLATEGA_MERCHANT_ID;
-  const secret = process.env.PLATEGA_SECRET;
+  const shopId = process.env.YUKASSA_SHOP_ID;
+  const secretKey = process.env.YUKASSA_SECRET_KEY;
 
   try {
     const [orders]: any = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
     if (orders.length === 0) return res.status(404).json({ error: 'Order not found' });
     const order = orders[0];
     if (order.is_paid) return res.status(400).json({ error: 'Order already paid' });
-
-    if (!merchantId || !secret) {
-      return res.status(503).json({ error: 'Platega not configured' });
-    }
+    if (!shopId || !secretKey) return res.status(503).json({ error: 'YuKassa not configured' });
 
     const host = req.get('host') || 'localhost:3000';
     const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
     const protocol = isHttps ? 'https' : 'http';
-    const isLocalHost = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('::1');
-    const successURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
-      ? `${protocol}://${host}/?orderId=${orderId}&payment=success`
-      : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=success`;
-    const failedURL = (isLocalHost && !host.includes('bezumni13.onrender.com'))
-      ? `${protocol}://${host}/?orderId=${orderId}&payment=failed`
-      : `https://bezumni13.onrender.com/?orderId=${orderId}&payment=failed`;
+    const returnUrl = `${protocol}://${host}/?orderId=${orderId}&payment=success`;
 
-    const plategaRes = await fetch('https://app.platega.io/transaction/process', {
+    const ykRes = await fetch('https://api.yookassa.ru/v3/payments', {
       method: 'POST',
-      headers: { 'X-MerchantId': merchantId, 'X-Secret': secret, 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': 'Basic ' + Buffer.from(`${shopId}:${secretKey}`).toString('base64'),
+        'Content-Type': 'application/json',
+        'Idempotence-Key': `order-${orderId}-retry-${Date.now()}`
+      },
       body: JSON.stringify({
-        paymentMethod: 2,
-        paymentDetails: { amount: order.total_amount, currency: 'RUB' },
-        description: `Оплата заказа №${orderId} в Крутая Шаурма`,
-        return: successURL,
-        failedUrl: failedURL,
-        payload: String(orderId)
+        amount: { value: Number(order.total_amount).toFixed(2), currency: 'RUB' },
+        confirmation: { type: 'redirect', return_url: returnUrl },
+        capture: true,
+        description: `Оплата заказа №${orderId} — Безумно Крутая Шаурма`,
+        metadata: { order_id: String(orderId) }
       })
     });
 
-    if (!plategaRes.ok) {
-      return res.status(502).json({ error: 'Platega API error' });
+    if (!ykRes.ok) return res.status(502).json({ error: 'YuKassa API error' });
+    const data = await ykRes.json();
+    if (data.id) {
+      await pool.query('UPDATE orders SET yukassa_payment_id = ? WHERE id = ?', [data.id, orderId]);
     }
-    const data = await plategaRes.json();
-    if (data.transactionId) {
-      await pool.query('UPDATE orders SET platega_transaction_id = ? WHERE id = ?', [data.transactionId, orderId]);
-    }
-    res.json({ redirect: data.redirect, transactionId: data.transactionId });
+    res.json({ redirect: data.confirmation?.confirmation_url, paymentId: data.id });
   } catch (err) {
-    console.error('Failed to create Platega link:', err);
+    console.error('Failed to create YuKassa link:', err);
     res.status(500).json({ error: 'Failed to create payment link' });
   }
 });
@@ -1283,6 +1501,14 @@ app.patch('/api/admin/menu/:id', async (req, res) => {
 app.patch('/api/admin/orders/:id', async (req, res) => {
   const { status, estimated_time } = req.body;
   try {
+    if (status === 'preparing') {
+      const [rows]: any = await pool.query(
+        "SELECT payment_method, is_paid FROM orders WHERE id = ?", [req.params.id]
+      );
+      if (rows.length > 0 && rows[0].payment_method === 'yukassa' && !rows[0].is_paid) {
+        return res.status(400).json({ error: 'Заказ не оплачен — нельзя передать в работу' });
+      }
+    }
     if (estimated_time !== undefined) {
       await pool.query('UPDATE orders SET status = ?, estimated_time = ? WHERE id = ?', [status, estimated_time, req.params.id]);
     } else {
@@ -1472,8 +1698,7 @@ app.get('/api/admin/stock', async (req, res) => {
       JOIN products p ON pv.product_id = p.id
       JOIN categories c ON p.category_id = c.id
       LEFT JOIN branch_variant_stock bvs ON bvs.branch_id = b.id AND bvs.variant_id = pv.id
-      WHERE c.name = 'Напитки'
-      ORDER BY b.id, c.name, p.name, pv.id
+      ORDER BY c.name, p.name, pv.id
     `);
     res.json(rows);
   } catch (err) {
@@ -1494,6 +1719,46 @@ app.post('/api/admin/stock', async (req, res) => {
   } catch (err) {
     console.error('Failed to update stock:', err);
     res.status(500).json({ error: 'Failed to update stock' });
+  }
+});
+
+// Admin: User management
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    const [rows]: any = await pool.query(
+      `SELECT id, phone, email, name, role, bonus_balance, email_verified,
+              (SELECT COUNT(*) FROM orders WHERE user_id = users.id) as orders_count,
+              created_at
+       FROM users ORDER BY created_at DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+app.patch('/api/admin/users/:id', async (req, res) => {
+  const { role, bonus_balance } = req.body;
+  try {
+    const fields: string[] = [];
+    const vals: any[] = [];
+    if (role !== undefined) { fields.push('role = ?'); vals.push(role); }
+    if (bonus_balance !== undefined) { fields.push('bonus_balance = ?'); vals.push(bonus_balance); }
+    if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+    vals.push(req.params.id);
+    await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, vals);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+app.delete('/api/admin/users/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM users WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'DB error' });
   }
 });
 
