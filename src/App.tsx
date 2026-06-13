@@ -2539,14 +2539,28 @@ export default function App() {
                 </div>
 
                 <div className="space-y-2 pt-2">
-                  <a
-                    href={pendingYukassaPayment.redirect}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    onClick={() => {
+                      const url = pendingYukassaPayment.redirect;
+                      const cordova = (window as any).cordova;
+                      if (cordova?.InAppBrowser) {
+                        const ref = cordova.InAppBrowser.open(
+                          url, '_blank',
+                          'location=yes,hardwareback=yes,toolbarcolor=#0a0a0a,closebuttoncolor=#ff6b00,closebuttoncaption=Закрыть,navigationbuttoncolor=#ff6b00'
+                        );
+                        ref.addEventListener('loadstart', (e: any) => {
+                          if (e.url && (e.url.includes('payment=success') || e.url.includes('безумнокрутаяшаурма'))) {
+                            ref.close();
+                          }
+                        });
+                      } else {
+                        window.open(url, '_blank');
+                      }
+                    }}
                     className="block w-full text-center bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black py-3 rounded-xl text-xs font-black uppercase italic transition-all active:scale-95 shadow-lg shadow-orange-500/20 flex items-center justify-center gap-1.5"
                   >
                     <QrCode className="w-4 h-4" /> Оплатить через ЮКассу
-                  </a>
+                  </button>
 
                   <button
                     onClick={() => setPendingYukassaPayment(null)}
